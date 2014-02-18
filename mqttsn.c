@@ -115,7 +115,28 @@ static void mqttsn_regack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 
 static void mqttsn_publish_handler(mqttsn_t *ctx, const char *buf, size_t size)
 {
+	mqttsn_publish_t *publish = (mqttsn_publish_t*)buf;
+	uint16_t topic_id, msg_id;
+	int subscription;
 
+	if (size < sizeof(mqttsn_publish_t)) {
+		ERROR("publish: invalid size\n");
+		return;
+	}
+
+	topic_id = mqttsn_ntohs(publish->topic_id);
+	msg_id = mqttsn_ntohs(publish->msg_id);
+
+	/* Find topic */
+	for (subscription = 0; subscription < MQTTSN_MAX_SUBSCRIBE_TOPICS; subscription++)
+		if (ctx->subscribe_ids[subscription] == topic_id)
+			break;
+	if (subscription == MQTTSN_MAX_SUBSCRIBE_TOPICS) {
+		ERROR("publish: unknown topic ID\n");
+		return;
+	}
+
+	TRACE("topic: %s, data: %s\n", ctx->subscribe_topics[subscription], publish->data);
 }
 
 static void mqttsn_puback_handler(mqttsn_t *ctx, const char *buf, size_t size)
