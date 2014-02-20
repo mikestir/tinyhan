@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#ifdef __linux__
+#if defined(__linux__) || defined(__APPLE__)
 #include <time.h>
 #define get_seconds()		time(NULL)
 #else
@@ -21,8 +21,7 @@ extern uint32_t get_seconds();
 
 #define MQTTSN_MAX_PACKET			64
 #define MQTTSN_MAX_CLIENT_ID		8
-#define MQTTSN_MAX_PUBLISH_TOPICS	8
-#define MQTTSN_MAX_SUBSCRIBE_TOPICS	8
+#define MQTTSN_MAX_TOPICS			16
 
 #define MQTTSN_N_RETRY				3
 #define MQTTSN_T_RETRY				5	/* seconds */
@@ -32,14 +31,24 @@ extern uint32_t get_seconds();
 typedef enum {
 	mqttsnDisconnected = 0,
 	mqttsnConnecting,
-	mqttsnRegister,
 	mqttsnRegistering,
-	mqttsnSubscribe,
-	mqttsnSubscribing,
 	mqttsnConnected,
-	mqttsnPublishing,
+	mqttsnBusy,
 	mqttsnDisconnecting,
 } mqttsn_state_t;
+
+#define MQTTSN_REG_PUBLISH		(0 << 7)
+#define MQTTSN_REG_SUBSCRIBE	(1 << 7)
+
+#define MQTTSN_QOS_MASK			(3 << 0)
+
+typedef struct {
+	const char *topic;
+	uint8_t flags;
+} mqttsn_topic_t;
+
+#define PUBLISH(topic)				{ topic, MQTTSN_REG_PUBLISH}
+#define SUBSCRIBE(topic,qos)		{ topic, MQTTSN_REG_SUBSCRIBE | ((qos) & MQTTSN_QOS_MASK) }
 
 typedef struct {
 	mqttsn_state_t	state;								/*< Current state machine state */
@@ -50,10 +59,8 @@ typedef struct {
 	time_t			next_ping;							/*< Time for next PINGRESP to satisfy keep-alive */
 
 	/* Topic registry */
-	const char**	publish_topics;						/*< Pointer to application supplied topic dictionary */
-	uint16_t		publish_ids[MQTTSN_MAX_PUBLISH_TOPICS];
-	const char**	subscribe_topics;					/*< Pointer to application supplied topic dictionary */
-	uint16_t		subscribe_ids[MQTTSN_MAX_SUBSCRIBE_TOPICS];
+	const mqttsn_topic_t	*topics;					/*< Pointer to application supplied topic dictionary */
+	uint16_t		topic_ids[MQTTSN_MAX_TOPICS];
 
 	/* Config */
 	char			client_id[MQTTSN_MAX_CLIENT_ID];	/*< Client ID sent on connect */
@@ -225,20 +232,19 @@ typedef struct {
 
 /* WILLTOPICUPD, WILLMSGUPD, WILLTOPICRESP, WILLMSGRESP not implemented */
 
-int mqttsn_init(mqttsn_t *ctx, const char *client_id);
+int mqttsn_init(mqttsn_t *ctx, const char *client_id, const mqttsn_topic_t *topics);
 int mqttsn_handler(mqttsn_t *ctx);
 mqttsn_state_t mqttsn_get_state(mqttsn_t *ctx);
 
-void mqttsn_connect(mqttsn_t *ctx, const char **publish_topics, const char **subscribe_topics);
+void mqttsn_connect(mqttsn_t *ctx);
 void mqttsn_disconnect(mqttsn_t *ctx, uint16_t duration);
-/* NOTE: These are currently for internal use only - the topic must appear in the
- * dictionary registered on connection, otherwise the reply will be thrown on
- * the floor.  We could potentially add support for extending the dictionary at
- * runtime.
+
+/*!
+ * \param ctx			Pointer to driver context
+ * \param topic_index	Index of topic in registry (as defined on connection)
+ * \param qos			QoS level (0 or 1) FIXME: support -1 and 2?
+ * \param data			String to publish
  */
-void mqttsn_register(mqttsn_t *ctx, uint16_t msg_id, const char *topic);
-void mqttsn_subscribe(mqttsn_t *ctx, uint16_t msg_id, const char *topic);
-/* qos may be 0 or 1 */
-void mqttsn_publish(mqttsn_t *ctx, uint16_t topic_id, const char *data, int qos);
+void mqttsn_publish(mqttsn_t *ctx, unsigned int topic_index, const char *data, int qos);
 
 #endif /* MQTTSN_H_ */

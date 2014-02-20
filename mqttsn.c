@@ -21,12 +21,9 @@
 static const char *states[] = {
 	"DISCONNECTED",
 	"CONNECTING",
-	"REGISTER",
 	"REGISTERING",
-	"SUBSCRIBE",
-	"SUBSCRIBING",
 	"CONNECTED",
-	"PUBLISHING",
+	"BUSY",
 	"DISCONNECTING",
 };
 
@@ -44,21 +41,18 @@ static int mqttsn_send(mqttsn_t *ctx, uint8_t msg_type, size_t size, int do_retr
 	return packet_send(ctx->message, size);
 }
 
-static inline void mqttsn_abort_send(mqttsn_t *ctx)
-{
-	ctx->n_retries = 0;
-	ctx->t_retry = 0;
-}
-
 static void mqttsn_to_state(mqttsn_t *ctx, mqttsn_state_t state)
 {
 	ctx->state = state;
-	mqttsn_abort_send(ctx); // state change always aborts any pending sends
+	/* Abort pending sends */
+	ctx->n_retries = 0;
+	ctx->t_retry = 0;
 	TRACE("--> %s\n", states[(int)state]);
 }
 
 static void mqttsn_connack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 {
+	mqttsn_header_t *out = (mqttsn_header_t*)ctx->message;
 	mqttsn_connack_t *connack = (mqttsn_connack_t*)buf;
 
 	if (size < sizeof(mqttsn_connack_t)) {
@@ -66,9 +60,14 @@ static void mqttsn_connack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 		return;
 	}
 
+	if (ctx->state != mqttsnConnecting || out->msg_type != MQTTSN_CONNECT) {
+		ERROR("connack in invalid state\n");
+		return;
+	}
+
 	if (connack->return_code == MQTTSN_RC_ACCEPTED) {
 		ctx->count = 0;
-		mqttsn_to_state(ctx, mqttsnRegister);
+		mqttsn_to_state(ctx, mqttsnRegistering);
 	} else
 		mqttsn_to_state(ctx, mqttsnDisconnected);
 }
@@ -78,17 +77,20 @@ static void mqttsn_register_handler(mqttsn_t *ctx, const char *buf, size_t size)
 
 }
 
+/* TODO: Merge REGACK and SUBACK handlers */
+
 static void mqttsn_regack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_register_t *reg = (mqttsn_register_t*)ctx->message;
 	mqttsn_regack_t *regack = (mqttsn_regack_t*)buf;
 
+	/* Validation */
 	if (size < sizeof(mqttsn_regack_t)) {
 		ERROR("regack: invalid size\n");
 		return;
 	}
 
-	if (ctx->state != mqttsnRegistering) {
+	if (ctx->state != mqttsnBusy || reg->header.msg_type != MQTTSN_REGISTER) {
 		ERROR("regack in invalid state\n");
 		return;
 	}
@@ -101,16 +103,54 @@ static void mqttsn_regack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 	if (regack->return_code == MQTTSN_RC_ACCEPTED) {
 		uint16_t topic_id = mqttsn_ntohs(regack->topic_id);
 		uint16_t msg_id = mqttsn_ntohs(regack->msg_id);
-		/* Update registry - msg_id is already validated against the transmitted value */
-		TRACE("registered topic ID 0x%04X for %s (%u)\n", topic_id, reg->topic_name, msg_id);
-		ctx->publish_ids[msg_id] = topic_id;
+		/* Update registry - msg_id is already validated against the transmitted value, and
+		 * we already checked that that was a REGISTER request */
+		TRACE("registered topic ID 0x%04X for PUBLISH %s (%u)\n", topic_id, reg->topic_name, msg_id);
+		ctx->topic_ids[msg_id] = topic_id;
 	} else {
 		ERROR("registration not accepted: %u\n", regack->return_code);
 		// FIXME: retry?
 	}
 
 	/* Register next topic */
-	mqttsn_to_state(ctx, mqttsnRegister);
+	mqttsn_to_state(ctx, mqttsnRegistering);
+}
+
+static void mqttsn_suback_handler(mqttsn_t *ctx, const char *buf, size_t size)
+{
+	mqttsn_subscribe_t *subscribe = (mqttsn_subscribe_t*)ctx->message;
+	mqttsn_suback_t *suback = (mqttsn_suback_t*)buf;
+
+	if (size < sizeof(mqttsn_suback_t)) {
+		ERROR("suback: invalid size\n");
+		return;
+	}
+
+	if (ctx->state != mqttsnBusy || subscribe->header.msg_type != MQTTSN_SUBSCRIBE) {
+		ERROR("suback in invalid state\n");
+		return;
+	}
+
+	if (suback->msg_id != subscribe->msg_id) {
+		ERROR("suback id mismatch\n");
+		return;
+	}
+
+	if (suback->return_code == MQTTSN_RC_ACCEPTED) {
+		uint16_t topic_id = mqttsn_ntohs(suback->topic_id);
+		uint16_t msg_id = mqttsn_ntohs(suback->msg_id);
+		/* Update registry - msg_id is already validated against the transmitted value, and
+		 * we already checked that that was a SUBSCRIBE request */
+		/* FIXME: QoS returned in SUBACK may not be the same as that requested */
+		TRACE("registered topic ID 0x%04X for SUBSCRIBE %s (%u)\n", topic_id, subscribe->topic.topic_name, msg_id);
+		ctx->topic_ids[msg_id] = topic_id;
+	} else {
+		ERROR("subscription not accepted: %u\n", suback->return_code);
+		// FIXME: retry?
+	}
+
+	/* Register next topic */
+	mqttsn_to_state(ctx, mqttsnRegistering);
 }
 
 static void mqttsn_publish_handler(mqttsn_t *ctx, const char *buf, size_t size)
@@ -127,16 +167,16 @@ static void mqttsn_publish_handler(mqttsn_t *ctx, const char *buf, size_t size)
 	topic_id = mqttsn_ntohs(publish->topic_id);
 	msg_id = mqttsn_ntohs(publish->msg_id);
 
-	/* Find topic */
-	for (subscription = 0; subscription < MQTTSN_MAX_SUBSCRIBE_TOPICS; subscription++)
-		if (ctx->subscribe_ids[subscription] == topic_id)
+	/* Find subscribed topic ID in registry */
+	for (subscription = 0; subscription < MQTTSN_MAX_TOPICS; subscription++)
+		if (ctx->topic_ids[subscription] == topic_id && (ctx->topics[subscription].flags & MQTTSN_REG_SUBSCRIBE))
 			break;
-	if (subscription == MQTTSN_MAX_SUBSCRIBE_TOPICS) {
-		ERROR("publish: unknown topic ID\n");
+	if (subscription == MQTTSN_MAX_TOPICS) {
+		ERROR("publish: unknown subscription ID\n");
 		return;
 	}
 
-	TRACE("topic: %s, data: %s\n", ctx->subscribe_topics[subscription], publish->data);
+	TRACE("topic: %s, data: %s\n", ctx->topics[subscription].topic, publish->data);
 }
 
 static void mqttsn_puback_handler(mqttsn_t *ctx, const char *buf, size_t size)
@@ -149,7 +189,7 @@ static void mqttsn_puback_handler(mqttsn_t *ctx, const char *buf, size_t size)
 		return;
 	}
 
-	if (ctx->state != mqttsnPublishing) {
+	if (ctx->state != mqttsnBusy) {
 		ERROR("puback in invalid state\n");
 		return;
 	}
@@ -167,53 +207,54 @@ static void mqttsn_puback_handler(mqttsn_t *ctx, const char *buf, size_t size)
 	mqttsn_to_state(ctx, mqttsnConnected);
 }
 
-static void mqttsn_suback_handler(mqttsn_t *ctx, const char *buf, size_t size)
-{
-	mqttsn_subscribe_t *subscribe = (mqttsn_subscribe_t*)ctx->message;
-	mqttsn_suback_t *suback = (mqttsn_suback_t*)buf;
-
-	if (size < sizeof(mqttsn_suback_t)) {
-		ERROR("suback: invalid size\n");
-		return;
-	}
-
-	if (ctx->state != mqttsnSubscribing) {
-		ERROR("suback in invalid state\n");
-		return;
-	}
-
-	if (suback->msg_id != subscribe->msg_id) {
-		ERROR("suback id mismatch\n");
-		return;
-	}
-
-	if (suback->return_code == MQTTSN_RC_ACCEPTED) {
-		uint16_t topic_id = mqttsn_ntohs(suback->topic_id);
-		uint16_t msg_id = mqttsn_ntohs(suback->msg_id);
-		/* Update registry - msg_id is already validated against the transmitted value */
-		TRACE("subscribed topic ID 0x%04X for %s (%u)\n", topic_id, subscribe->topic.topic_name, msg_id);
-		ctx->subscribe_ids[msg_id] = topic_id;
-	} else {
-		ERROR("subscription not accepted: %u\n", suback->return_code);
-		// FIXME: retry?
-	}
-
-	/* Register next topic */
-	mqttsn_to_state(ctx, mqttsnSubscribe);
-}
-
 static void mqttsn_disconnect_handler(mqttsn_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_to_state(ctx, mqttsnDisconnected);
 }
 
-int mqttsn_init(mqttsn_t *ctx, const char *client_id)
+static void mqttsn_register(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
+{
+	mqttsn_register_t *reg = (mqttsn_register_t*)ctx->message;
+
+	// FIXME: Check state?
+
+	TRACE("REGISTER: %s\n", topic);
+	mqttsn_to_state(ctx, mqttsnBusy);
+	reg->topic_id = 0;
+	reg->msg_id = mqttsn_htons(msg_id);
+	strcpy(reg->topic_name, topic); // FIXME: bounds checking
+	mqttsn_send(ctx, MQTTSN_REGISTER, sizeof(mqttsn_register_t) + strlen(topic), 1);
+}
+
+static void mqttsn_subscribe(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
+{
+	mqttsn_subscribe_t *subscribe = (mqttsn_subscribe_t*)ctx->message;
+
+	// FIXME: Check state?
+
+	TRACE("SUBSCRIBE: %s\n", topic);
+	mqttsn_to_state(ctx, mqttsnBusy);
+	subscribe->flags = 0; // FIXME: QoS - need to pass this from topic dictionary
+	subscribe->msg_id = mqttsn_htons(msg_id);
+	strcpy(subscribe->topic.topic_name, topic); // FIXME: bounds checking
+	mqttsn_send(ctx, MQTTSN_SUBSCRIBE, sizeof(mqttsn_subscribe_t) + strlen(topic), 1);
+
+	/* Set DUP bit in case we retry */
+	subscribe->flags |= MQTTSN_FLAG_DUP;
+}
+
+int mqttsn_init(mqttsn_t *ctx, const char *client_id, const mqttsn_topic_t *topics)
 {
 	packet_init();
+
 
 	/* Initialise MQTT-SN state */
 	memset(ctx, 0, sizeof(mqttsn_t));
 	strncpy(ctx->client_id, client_id, sizeof(ctx->client_id));
+
+	/* Initialise registration/subscription dictionary */
+	ctx->topics = topics;
+
 	return 0;
 }
 
@@ -315,25 +356,20 @@ int mqttsn_handler(mqttsn_t *ctx)
 	}
 
 	/* Handle registrations */
-	switch (ctx->state) {
-	case mqttsnRegister:
-		if (ctx->publish_topics[ctx->count] == NULL) {
-			ctx->count = 0;
-			mqttsn_to_state(ctx, mqttsnSubscribe);
-			break;
-		}
-		mqttsn_register(ctx, ctx->count, ctx->publish_topics[ctx->count]);
-		ctx->count++;
-		break;
-	case mqttsnSubscribe:
-		if (ctx->subscribe_topics[ctx->count] == NULL) {
+	if (ctx->state == mqttsnRegistering) {
+		const mqttsn_topic_t *topic = &ctx->topics[ctx->count];
+		if (topic->topic == NULL) {
+			/* All done */
 			ctx->count = 0;
 			mqttsn_to_state(ctx, mqttsnConnected);
-			break;
+		} else {
+			/* Register/subscribe next */
+			if (topic->flags & MQTTSN_REG_SUBSCRIBE)
+				mqttsn_subscribe(ctx, ctx->count, ctx->topics[ctx->count].topic);
+			else
+				mqttsn_register(ctx, ctx->count, ctx->topics[ctx->count].topic);
+			ctx->count++;
 		}
-		mqttsn_subscribe(ctx, ctx->count, ctx->subscribe_topics[ctx->count]);
-		ctx->count++;
-		break;
 	}
 
 	return 0;
@@ -344,7 +380,7 @@ mqttsn_state_t mqttsn_get_state(mqttsn_t *ctx)
 	return ctx->state;
 }
 
-void mqttsn_connect(mqttsn_t *ctx, const char **publish_topics, const char **subscribe_topics)
+void mqttsn_connect(mqttsn_t *ctx)
 {
 	mqttsn_connect_t *connect = (mqttsn_connect_t*)ctx->message;
 
@@ -353,11 +389,6 @@ void mqttsn_connect(mqttsn_t *ctx, const char **publish_topics, const char **sub
 		return;
 	}
 	mqttsn_to_state(ctx, mqttsnConnecting);
-
-	/* TODO: Similar for subscriptions.  Should this go here or in init?  Maybe here
-	 * but allow NULL in which case CLEAN_SESSION is not used? */
-	ctx->publish_topics = publish_topics;
-	ctx->subscribe_topics = subscribe_topics;
 
 	connect->flags = MQTTSN_FLAG_CLEAN_SESSION; // FIXME: can we reconnect without this?
 	connect->protocol_id = MQTTSN_PROTOCOL_ID;
@@ -376,38 +407,7 @@ void mqttsn_disconnect(mqttsn_t *ctx, uint16_t duration)
 	mqttsn_send(ctx, MQTTSN_DISCONNECT, sizeof(mqttsn_header_t), 1); // disconnect field is only sent by sleeping clients
 }
 
-void mqttsn_register(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
-{
-	mqttsn_register_t *reg = (mqttsn_register_t*)ctx->message;
-
-	// FIXME: Check state?
-
-	TRACE("REGISTER: %s\n", topic);
-	mqttsn_to_state(ctx, mqttsnRegistering);
-	reg->topic_id = 0;
-	reg->msg_id = mqttsn_htons(msg_id);
-	strcpy(reg->topic_name, topic); // FIXME: bounds checking
-	mqttsn_send(ctx, MQTTSN_REGISTER, sizeof(mqttsn_register_t) + strlen(topic), 1);
-}
-
-void mqttsn_subscribe(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
-{
-	mqttsn_subscribe_t *subscribe = (mqttsn_subscribe_t*)ctx->message;
-
-	// FIXME: Check state?
-
-	TRACE("SUBSCRIBE: %s\n", topic);
-	mqttsn_to_state(ctx, mqttsnSubscribing);
-	subscribe->flags = 0; // FIXME: QoS - need to pass this from topic dictionary
-	subscribe->msg_id = mqttsn_htons(msg_id);
-	strcpy(subscribe->topic.topic_name, topic); // FIXME: bounds checking
-	mqttsn_send(ctx, MQTTSN_SUBSCRIBE, sizeof(mqttsn_subscribe_t) + strlen(topic), 1);
-
-	/* Set DUP bit in case we retry */
-	subscribe->flags |= MQTTSN_FLAG_DUP;
-}
-
-void mqttsn_publish(mqttsn_t *ctx, uint16_t topic_id, const char *data, int qos)
+void mqttsn_publish(mqttsn_t *ctx, unsigned int topic_index, const char *data, int qos)
 {
 	mqttsn_publish_t *publish = (mqttsn_publish_t*)ctx->message;
 
@@ -416,17 +416,17 @@ void mqttsn_publish(mqttsn_t *ctx, uint16_t topic_id, const char *data, int qos)
 		return;
 	}
 
-	TRACE("PUBLISH: 0x%04X = %s (qos=%d)\n", topic_id, data, qos);
+	TRACE("PUBLISH: 0x%04X = %s (qos=%d)\n", ctx->topic_ids[topic_index], data, qos);
 	if (qos) {
 		/* Only if we expect to get a PUBACK back */
-		mqttsn_to_state(ctx, mqttsnPublishing);
+		mqttsn_to_state(ctx, mqttsnBusy);
 	}
 
 	/* Send first try (only try for QoS 0) */
 	publish->flags = MQTTSN_FLAG_TOPIC_ID_NORM | (qos ? MQTTSN_FLAG_QOS_1 : MQTTSN_FLAG_QOS_0);
-	//publish->topic_id = mqttsn_htons(topic_id);
-	publish->topic_id = mqttsn_htons(ctx->publish_ids[topic_id]); // FIXME: some way to select between short topics and registry?
-	publish->msg_id = 0; // FIXME
+	//publish->topic_id = mqttsn_htons(topic_id); // FIXME: could support short/pre-defined topics
+	publish->topic_id = mqttsn_htons(ctx->topic_ids[topic_index]);
+	publish->msg_id = 0; // FIXME: sequence numbering
 	strcpy(publish->data, data); // FIXME: bounds checking
 	mqttsn_send(ctx, MQTTSN_PUBLISH, sizeof(mqttsn_publish_t) + strlen(data), qos);
 

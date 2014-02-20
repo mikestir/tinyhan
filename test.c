@@ -8,22 +8,19 @@
 #include <signal.h>
 
 #include "common.h"
+#include "packet.h"
 #include "mqttsn.h"
 
 #define INTERVAL 5
 
 static volatile int quit = 0;
 
-static const char* publish_topics[] = {
-		"zone/1/0/temp",
-		"zone/1/0/status",
-		"zone/1/0/important",
-		NULL,
-};
-
-static const char* subscribe_topics[] = {
-		"zone/1/target",
-		NULL,
+static const mqttsn_topic_t topics[] = {
+	PUBLISH("zone/1/0/temp"),
+	PUBLISH("zone/1/0/status"),
+	PUBLISH("zone/1/0/important"),
+	SUBSCRIBE("zone/1/target", 0),
+	NULL
 };
 
 static void break_handler(int signum)
@@ -43,15 +40,15 @@ int main(void)
 	new_sa.sa_flags = 0;
 	sigaction(SIGINT, &new_sa, &old_sa);
 
-	mqttsn_init(ctx, "test1");
-	mqttsn_connect(ctx, publish_topics, subscribe_topics);
+	mqttsn_init(ctx, "test1", topics);
+	mqttsn_connect(ctx);
 	while (!quit) {
 		packet_poll(1000);
 		mqttsn_handler(ctx);
 		switch (mqttsn_get_state(ctx)) {
 		case mqttsnDisconnected:
 			// try to (re-)connect
-			mqttsn_connect(ctx, publish_topics, subscribe_topics);
+			mqttsn_connect(ctx);
 			break;
 		case mqttsnConnected:
 			// do publish stuff
@@ -61,8 +58,6 @@ int main(void)
 				mqttsn_publish(ctx, 1, "world", 0);
 				mqttsn_publish(ctx, 2, "qos", 1);
 			}
-			break;
-		case mqttsnPublishing:
 			break;
 		}
 	}
