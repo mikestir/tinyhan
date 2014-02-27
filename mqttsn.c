@@ -12,11 +12,12 @@
 #include "mqttsn.h"
 
 // FIXME: Not sure what's required here - look at mqtt-sn-tools for comparison
-#define SEND_KEEP_ALIVE
+//#define SEND_KEEP_ALIVE
 
 #define mqttsn_htons(a)		(((uint16_t)a >> 8) | ((uint16_t)a << 8))
 #define mqttsn_ntohs(a)		mqttsn_htons(a)
 
+#ifdef DEBUG
 // for debugging state changes
 static const char *states[] = {
 	"DISCONNECTED",
@@ -26,6 +27,7 @@ static const char *states[] = {
 	"BUSY",
 	"DISCONNECTING",
 };
+#endif
 
 static int mqttsn_send(mqttsn_t *ctx, uint8_t msg_type, size_t size, int do_retry)
 {
@@ -67,18 +69,24 @@ static void mqttsn_connack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 
 	if (connack->return_code == MQTTSN_RC_ACCEPTED) {
 		ctx->count = 0;
-		mqttsn_to_state(ctx, mqttsnRegistering);
-	} else
+		if (ctx->is_registered)
+			mqttsn_to_state(ctx, mqttsnConnected);
+		else
+			mqttsn_to_state(ctx, mqttsnRegistering);
+	} else {
+		ERROR("connack return code: 0x%02X\n", connack->return_code);
 		mqttsn_to_state(ctx, mqttsnDisconnected);
+	}
 }
 
+/* TODO: Implement this for re-registration after a disconnect (sleeping).
+ * Also required for support of wildcard subscriptions */
 static void mqttsn_register_handler(mqttsn_t *ctx, const char *buf, size_t size)
 {
-
+	ERROR("REGISTER handler not implemented\n");
 }
 
 /* TODO: Merge REGACK and SUBACK handlers */
-
 static void mqttsn_regack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_register_t *reg = (mqttsn_register_t*)ctx->message;
@@ -226,7 +234,7 @@ static void mqttsn_register(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
 	mqttsn_send(ctx, MQTTSN_REGISTER, sizeof(mqttsn_register_t) + strlen(topic), 1);
 }
 
-static void mqttsn_subscribe(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
+static void mqttsn_subscribe(mqttsn_t *ctx, uint16_t msg_id, const char *topic, int qos)
 {
 	mqttsn_subscribe_t *subscribe = (mqttsn_subscribe_t*)ctx->message;
 
@@ -234,7 +242,7 @@ static void mqttsn_subscribe(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
 
 	TRACE("SUBSCRIBE: %s\n", topic);
 	mqttsn_to_state(ctx, mqttsnBusy);
-	subscribe->flags = 0; // FIXME: QoS - need to pass this from topic dictionary
+	subscribe->flags = qos ? MQTTSN_FLAG_QOS_1 : MQTTSN_FLAG_QOS_0;
 	subscribe->msg_id = mqttsn_htons(msg_id);
 	strcpy(subscribe->topic.topic_name, topic); // FIXME: bounds checking
 	mqttsn_send(ctx, MQTTSN_SUBSCRIBE, sizeof(mqttsn_subscribe_t) + strlen(topic), 1);
@@ -305,14 +313,14 @@ int mqttsn_handler(mqttsn_t *ctx)
 		}
 
 		switch (hdr->msg_type) {
-	#if 0
+#if 0
 		case MQTTSN_ADVERTISE:
 			TRACE("ADVERTISE\n");
 			break;
 		case MQTTSN_GWINFO:
 			TRACE("GWINFO\n");
 			break;
-	#endif
+#endif
 		case MQTTSN_CONNACK:
 			TRACE("CONNACK\n");
 			mqttsn_connack_handler(ctx, buf, size);
@@ -337,6 +345,7 @@ int mqttsn_handler(mqttsn_t *ctx)
 			TRACE("SUBACK\n");
 			mqttsn_suback_handler(ctx, buf, size);
 			break;
+#if 0
 		case MQTTSN_UNSUBACK:
 			TRACE("UNSUBACK\n");
 			break;
@@ -346,6 +355,7 @@ int mqttsn_handler(mqttsn_t *ctx)
 		case MQTTSN_PINGRESP:
 			TRACE("PINGRESP\n");
 			break;
+#endif
 		case MQTTSN_DISCONNECT:
 			TRACE("DISCONNECT\n");
 			mqttsn_disconnect_handler(ctx, buf, size);
@@ -361,11 +371,13 @@ int mqttsn_handler(mqttsn_t *ctx)
 		if (topic->topic == NULL) {
 			/* All done */
 			ctx->count = 0;
+			ctx->is_registered = 1;
 			mqttsn_to_state(ctx, mqttsnConnected);
 		} else {
 			/* Register/subscribe next */
 			if (topic->flags & MQTTSN_REG_SUBSCRIBE)
-				mqttsn_subscribe(ctx, ctx->count, ctx->topics[ctx->count].topic);
+				mqttsn_subscribe(ctx, ctx->count, ctx->topics[ctx->count].topic,
+					ctx->topics[ctx->count].flags & MQTTSN_REG_QOS_MASK);
 			else
 				mqttsn_register(ctx, ctx->count, ctx->topics[ctx->count].topic);
 			ctx->count++;
@@ -388,12 +400,16 @@ void mqttsn_connect(mqttsn_t *ctx)
 		ERROR("Already connected\n");
 		return;
 	}
-	mqttsn_to_state(ctx, mqttsnConnecting);
 
-	connect->flags = MQTTSN_FLAG_CLEAN_SESSION; // FIXME: can we reconnect without this?
+	// NOTE: The broker seems to wipe out state on _disconnect_ if CLEAN_SESSION is
+	// set, which seems counterintuitive
+	connect->flags = (!ctx->is_registered) ? MQTTSN_FLAG_CLEAN_SESSION : 0;
+//	connect->flags = 0;
 	connect->protocol_id = MQTTSN_PROTOCOL_ID;
 	connect->duration = mqttsn_htons(MQTTSN_KEEP_ALIVE);
 	strcpy(connect->client_id, ctx->client_id); // FIXME: bounds checking
+	TRACE("CONNECT flags = 0x%02X\n", connect->flags);
+	mqttsn_to_state(ctx, mqttsnConnecting);
 	mqttsn_send(ctx, MQTTSN_CONNECT, sizeof(mqttsn_connect_t) + strlen(ctx->client_id), 1);
 }
 
@@ -401,10 +417,15 @@ void mqttsn_disconnect(mqttsn_t *ctx, uint16_t duration)
 {
 	mqttsn_disconnect_t *disconnect = (mqttsn_disconnect_t*)ctx->message;
 
+	if (ctx->state == mqttsnDisconnected) {
+		INFO("Already disconnected\n");
+		return;
+	}
 	mqttsn_to_state(ctx, mqttsnDisconnecting);
 
-	disconnect->duration = 0;
-	mqttsn_send(ctx, MQTTSN_DISCONNECT, sizeof(mqttsn_header_t), 1); // disconnect field is only sent by sleeping clients
+	disconnect->duration = mqttsn_htons(duration);
+	mqttsn_send(ctx, MQTTSN_DISCONNECT, sizeof(mqttsn_header_t) +
+		(duration ? sizeof(disconnect->duration) : 0), 1); // duration field is only sent by sleeping clients
 }
 
 void mqttsn_publish(mqttsn_t *ctx, unsigned int topic_index, const char *data, int qos)
@@ -418,7 +439,7 @@ void mqttsn_publish(mqttsn_t *ctx, unsigned int topic_index, const char *data, i
 
 	TRACE("PUBLISH: 0x%04X = %s (qos=%d)\n", ctx->topic_ids[topic_index], data, qos);
 	if (qos) {
-		/* Only if we expect to get a PUBACK back */
+		/* Only if we expect to get a PUBACK back, otherwise fire and forget */
 		mqttsn_to_state(ctx, mqttsnBusy);
 	}
 

@@ -40,7 +40,7 @@ typedef enum {
 #define MQTTSN_REG_PUBLISH		(0 << 7)
 #define MQTTSN_REG_SUBSCRIBE	(1 << 7)
 
-#define MQTTSN_QOS_MASK			(3 << 0)
+#define MQTTSN_REG_QOS_MASK		(3 << 0)
 
 typedef struct {
 	const char *topic;
@@ -48,7 +48,7 @@ typedef struct {
 } mqttsn_topic_t;
 
 #define PUBLISH(topic)				{ topic, MQTTSN_REG_PUBLISH}
-#define SUBSCRIBE(topic,qos)		{ topic, MQTTSN_REG_SUBSCRIBE | ((qos) & MQTTSN_QOS_MASK) }
+#define SUBSCRIBE(topic,qos)		{ topic, MQTTSN_REG_SUBSCRIBE | ((qos) & MQTTSN_REG_QOS_MASK) }
 
 typedef struct {
 	mqttsn_state_t	state;								/*< Current state machine state */
@@ -61,6 +61,7 @@ typedef struct {
 	/* Topic registry */
 	const mqttsn_topic_t	*topics;					/*< Pointer to application supplied topic dictionary */
 	uint16_t		topic_ids[MQTTSN_MAX_TOPICS];
+	int				is_registered;						/*< Used for skipping registration if we were asleep */
 
 	/* Config */
 	char			client_id[MQTTSN_MAX_CLIENT_ID];	/*< Client ID sent on connect */

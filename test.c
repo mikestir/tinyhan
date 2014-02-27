@@ -16,10 +16,13 @@
 static volatile int quit = 0;
 
 static const mqttsn_topic_t topics[] = {
+#if 1
 	PUBLISH("zone/1/0/temp"),
 	PUBLISH("zone/1/0/status"),
 	PUBLISH("zone/1/0/important"),
+#endif
 	SUBSCRIBE("zone/1/target", 0),
+	SUBSCRIBE("zone/1/message", 0),
 	NULL
 };
 
@@ -31,7 +34,7 @@ static void break_handler(int signum)
 int main(void)
 {
 	struct sigaction new_sa, old_sa;
-	time_t next = 0;
+	time_t next = time(NULL) + INTERVAL;
 	mqttsn_t _ctx;
 	mqttsn_t *ctx = &_ctx;
 
@@ -48,15 +51,21 @@ int main(void)
 		switch (mqttsn_get_state(ctx)) {
 		case mqttsnDisconnected:
 			// try to (re-)connect
-			mqttsn_connect(ctx);
+			if (time(NULL) >= next) {
+				next = time(NULL) + INTERVAL;
+				mqttsn_connect(ctx);
+			}
 			break;
 		case mqttsnConnected:
 			// do publish stuff
 			if (time(NULL) >= next) {
 				next = time(NULL) + INTERVAL;
+				mqttsn_disconnect(ctx, 0);
+#if 0
 				mqttsn_publish(ctx, 0, "hello", 0);
 				mqttsn_publish(ctx, 1, "world", 0);
 				mqttsn_publish(ctx, 2, "qos", 1);
+#endif
 			}
 			break;
 		}

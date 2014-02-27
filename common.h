@@ -10,6 +10,7 @@
 
 #include <stdio.h>
 
+#ifdef DEBUG
 #define DUMP(buf, size) \
 {\
 	int n;\
@@ -24,5 +25,11 @@
 #define TRACE(a,...)	fprintf(stderr, a, ##__VA_ARGS__)
 #define INFO(a,...)		fprintf(stderr, a, ##__VA_ARGS__)
 #define ERROR(a,...)	fprintf(stderr, a, ##__VA_ARGS__)
+#else
+#define DUMP(buf, size)
+#define TRACE(a,...)
+#define INFO(a,...)
+#define ERROR(a,...)
+#endif
 
 #endif /* COMMON_H_ */

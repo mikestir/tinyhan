@@ -14,6 +14,7 @@
 #include <stddef.h>
 #include <poll.h>
 
+#undef DEBUG
 #include "common.h"
 #include "packet.h"
 
