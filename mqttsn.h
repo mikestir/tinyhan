@@ -11,6 +11,12 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define MQTTSN_MAX_PACKET			64
+
+#define MQTTSN_N_RETRY				3
+#define MQTTSN_T_RETRY				5	/* seconds */
+#define MQTTSN_KEEP_ALIVE			10	/* seconds */
+
 /* MsgType */
 
 #define MQTTSN_ADVERTISE			0x00

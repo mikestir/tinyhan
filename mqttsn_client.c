@@ -8,7 +8,6 @@
 #include <string.h>
 
 #include "common.h"
-#include "packet.h"
 #include "mqttsn_client.h"
 
 // FIXME: Not sure what's required here - look at mqtt-sn-tools for comparison
@@ -29,7 +28,7 @@ static const char *states[] = {
 };
 #endif
 
-static int mqttsn_send(mqttsn_t *ctx, uint8_t msg_type, size_t size, int do_retry)
+static int mqttsn_send(mqttsn_client_t *ctx, uint8_t msg_type, size_t size, int do_retry)
 {
 	mqttsn_header_t *hdr = (mqttsn_header_t*)ctx->message;
 
@@ -40,10 +39,10 @@ static int mqttsn_send(mqttsn_t *ctx, uint8_t msg_type, size_t size, int do_retr
 		ctx->t_retry = get_seconds() + MQTTSN_T_RETRY;
 	}
 	ctx->next_ping = get_seconds() + MQTTSN_KEEP_ALIVE;
-	return packet_send(ctx->message, size);
+	return ctx->cb_send(ctx->message, size);
 }
 
-static void mqttsn_to_state(mqttsn_t *ctx, mqttsn_state_t state)
+static void mqttsn_to_state(mqttsn_client_t *ctx, mqttsn_client_state_t state)
 {
 	ctx->state = state;
 	/* Abort pending sends */
@@ -52,7 +51,7 @@ static void mqttsn_to_state(mqttsn_t *ctx, mqttsn_state_t state)
 	TRACE("--> %s\n", states[(int)state]);
 }
 
-static void mqttsn_connack_handler(mqttsn_t *ctx, const char *buf, size_t size)
+static void mqttsn_connack_handler(mqttsn_client_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_header_t *out = (mqttsn_header_t*)ctx->message;
 	mqttsn_connack_t *connack = (mqttsn_connack_t*)buf;
@@ -81,13 +80,13 @@ static void mqttsn_connack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 
 /* TODO: Implement this for re-registration after a disconnect (sleeping).
  * Also required for support of wildcard subscriptions */
-static void mqttsn_register_handler(mqttsn_t *ctx, const char *buf, size_t size)
+static void mqttsn_register_handler(mqttsn_client_t *ctx, const char *buf, size_t size)
 {
 	ERROR("REGISTER handler not implemented\n");
 }
 
 /* TODO: Merge REGACK and SUBACK handlers */
-static void mqttsn_regack_handler(mqttsn_t *ctx, const char *buf, size_t size)
+static void mqttsn_regack_handler(mqttsn_client_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_register_t *reg = (mqttsn_register_t*)ctx->message;
 	mqttsn_regack_t *regack = (mqttsn_regack_t*)buf;
@@ -124,7 +123,7 @@ static void mqttsn_regack_handler(mqttsn_t *ctx, const char *buf, size_t size)
 	mqttsn_to_state(ctx, mqttsnRegistering);
 }
 
-static void mqttsn_suback_handler(mqttsn_t *ctx, const char *buf, size_t size)
+static void mqttsn_suback_handler(mqttsn_client_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_subscribe_t *subscribe = (mqttsn_subscribe_t*)ctx->message;
 	mqttsn_suback_t *suback = (mqttsn_suback_t*)buf;
@@ -161,7 +160,7 @@ static void mqttsn_suback_handler(mqttsn_t *ctx, const char *buf, size_t size)
 	mqttsn_to_state(ctx, mqttsnRegistering);
 }
 
-static void mqttsn_publish_handler(mqttsn_t *ctx, const char *buf, size_t size)
+static void mqttsn_publish_handler(mqttsn_client_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_publish_t *publish = (mqttsn_publish_t*)buf;
 	uint16_t topic_id, msg_id;
@@ -176,10 +175,10 @@ static void mqttsn_publish_handler(mqttsn_t *ctx, const char *buf, size_t size)
 	msg_id = mqttsn_ntohs(publish->msg_id);
 
 	/* Find subscribed topic ID in registry */
-	for (subscription = 0; subscription < MQTTSN_MAX_TOPICS; subscription++)
+	for (subscription = 0; subscription < MQTTSN_MAX_CLIENT_TOPICS; subscription++)
 		if (ctx->topic_ids[subscription] == topic_id && (ctx->topics[subscription].flags & MQTTSN_REG_SUBSCRIBE))
 			break;
-	if (subscription == MQTTSN_MAX_TOPICS) {
+	if (subscription == MQTTSN_MAX_CLIENT_TOPICS) {
 		ERROR("publish: unknown subscription ID\n");
 		return;
 	}
@@ -187,7 +186,7 @@ static void mqttsn_publish_handler(mqttsn_t *ctx, const char *buf, size_t size)
 	TRACE("topic: %s, data: %s\n", ctx->topics[subscription].topic, publish->data);
 }
 
-static void mqttsn_puback_handler(mqttsn_t *ctx, const char *buf, size_t size)
+static void mqttsn_puback_handler(mqttsn_client_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_publish_t *publish = (mqttsn_publish_t*)ctx->message;
 	mqttsn_puback_t *puback = (mqttsn_puback_t*)buf;
@@ -215,12 +214,12 @@ static void mqttsn_puback_handler(mqttsn_t *ctx, const char *buf, size_t size)
 	mqttsn_to_state(ctx, mqttsnConnected);
 }
 
-static void mqttsn_disconnect_handler(mqttsn_t *ctx, const char *buf, size_t size)
+static void mqttsn_disconnect_handler(mqttsn_client_t *ctx, const char *buf, size_t size)
 {
 	mqttsn_to_state(ctx, mqttsnDisconnected);
 }
 
-static void mqttsn_register(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
+static void mqttsn_register(mqttsn_client_t *ctx, uint16_t msg_id, const char *topic)
 {
 	mqttsn_register_t *reg = (mqttsn_register_t*)ctx->message;
 
@@ -234,7 +233,7 @@ static void mqttsn_register(mqttsn_t *ctx, uint16_t msg_id, const char *topic)
 	mqttsn_send(ctx, MQTTSN_REGISTER, sizeof(mqttsn_register_t) + strlen(topic), 1);
 }
 
-static void mqttsn_subscribe(mqttsn_t *ctx, uint16_t msg_id, const char *topic, int qos)
+static void mqttsn_subscribe(mqttsn_client_t *ctx, uint16_t msg_id, const char *topic, int qos)
 {
 	mqttsn_subscribe_t *subscribe = (mqttsn_subscribe_t*)ctx->message;
 
@@ -251,14 +250,13 @@ static void mqttsn_subscribe(mqttsn_t *ctx, uint16_t msg_id, const char *topic, 
 	subscribe->flags |= MQTTSN_FLAG_DUP;
 }
 
-int mqttsn_init(mqttsn_t *ctx, const char *client_id, const mqttsn_topic_t *topics)
+int mqttsn_client_init(mqttsn_client_t *ctx, const char *client_id,
+	const mqttsn_client_topic_t *topics, mqttsn_send_callback_t cb_send)
 {
-	packet_init();
-
-
 	/* Initialise MQTT-SN state */
-	memset(ctx, 0, sizeof(mqttsn_t));
+	memset(ctx, 0, sizeof(mqttsn_client_t));
 	strncpy(ctx->client_id, client_id, sizeof(ctx->client_id));
+	ctx->cb_send = cb_send;
 
 	/* Initialise registration/subscription dictionary */
 	ctx->topics = topics;
@@ -266,11 +264,9 @@ int mqttsn_init(mqttsn_t *ctx, const char *client_id, const mqttsn_topic_t *topi
 	return 0;
 }
 
-int mqttsn_handler(mqttsn_t *ctx)
+void mqttsn_client_handler(mqttsn_client_t *ctx, const char *buf, size_t size)
 {
-	static char buf[MQTTSN_MAX_PACKET];
 	mqttsn_header_t *hdr;
-	int size;
 
 	hdr = (mqttsn_header_t*)ctx->message;
 	if (ctx->t_retry && get_seconds() >= ctx->t_retry) {
@@ -280,7 +276,7 @@ int mqttsn_handler(mqttsn_t *ctx)
 			ctx->t_retry = get_seconds() + MQTTSN_T_RETRY;
 			ctx->next_ping = get_seconds() + MQTTSN_KEEP_ALIVE;
 			INFO("retrying send (0x%02X), %u remaining\n", hdr->msg_type, ctx->n_retries);
-			if (packet_send(ctx->message, hdr->length) < 0) {
+			if (ctx->cb_send(ctx->message, hdr->length) < 0) {
 				ERROR("send failed\n");
 			}
 		} else {
@@ -299,19 +295,9 @@ int mqttsn_handler(mqttsn_t *ctx)
 	}
 #endif
 
-	/* Read inbound packet */
+	/* Process inbound packet */
 	hdr = (mqttsn_header_t*)buf;
-	if ((size = packet_recv(buf, sizeof(buf))) > 0) {
-		/* Sanity checks */
-		if (size < 2) {
-			ERROR("packet too short\n");
-			return -1;
-		}
-		if (size < hdr->length) {
-			ERROR("packet truncated\n");
-			return -1;
-		}
-
+	if (buf && size >= sizeof(mqttsn_header_t) && size >= hdr->length) {
 		switch (hdr->msg_type) {
 #if 0
 		case MQTTSN_ADVERTISE:
@@ -367,7 +353,7 @@ int mqttsn_handler(mqttsn_t *ctx)
 
 	/* Handle registrations */
 	if (ctx->state == mqttsnRegistering) {
-		const mqttsn_topic_t *topic = &ctx->topics[ctx->count];
+		const mqttsn_client_topic_t *topic = &ctx->topics[ctx->count];
 		if (topic->topic == NULL) {
 			/* All done */
 			ctx->count = 0;
@@ -383,16 +369,9 @@ int mqttsn_handler(mqttsn_t *ctx)
 			ctx->count++;
 		}
 	}
-
-	return 0;
 }
 
-mqttsn_state_t mqttsn_get_state(mqttsn_t *ctx)
-{
-	return ctx->state;
-}
-
-void mqttsn_connect(mqttsn_t *ctx)
+void mqttsn_connect(mqttsn_client_t *ctx)
 {
 	mqttsn_connect_t *connect = (mqttsn_connect_t*)ctx->message;
 
@@ -413,7 +392,7 @@ void mqttsn_connect(mqttsn_t *ctx)
 	mqttsn_send(ctx, MQTTSN_CONNECT, sizeof(mqttsn_connect_t) + strlen(ctx->client_id), 1);
 }
 
-void mqttsn_disconnect(mqttsn_t *ctx, uint16_t duration)
+void mqttsn_disconnect(mqttsn_client_t *ctx, uint16_t duration)
 {
 	mqttsn_disconnect_t *disconnect = (mqttsn_disconnect_t*)ctx->message;
 
@@ -428,7 +407,7 @@ void mqttsn_disconnect(mqttsn_t *ctx, uint16_t duration)
 		(duration ? sizeof(disconnect->duration) : 0), 1); // duration field is only sent by sleeping clients
 }
 
-void mqttsn_publish(mqttsn_t *ctx, unsigned int topic_index, const char *data, int qos)
+void mqttsn_publish(mqttsn_client_t *ctx, unsigned int topic_index, const char *data, int qos)
 {
 	mqttsn_publish_t *publish = (mqttsn_publish_t*)ctx->message;
 
@@ -455,3 +434,6 @@ void mqttsn_publish(mqttsn_t *ctx, unsigned int topic_index, const char *data, i
 	publish->flags |= MQTTSN_FLAG_DUP;
 }
 
+mqttsn_client_state_t mqttsn_get_client_state(mqttsn_client_t* ctx) {
+	return ctx->state;
+}

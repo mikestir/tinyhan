@@ -15,7 +15,7 @@
 
 static volatile int quit = 0;
 
-static const mqttsn_topic_t topics[] = {
+static const mqttsn_client_topic_t topics[] = {
 #if 1
 	PUBLISH("zone/1/0/temp"),
 	PUBLISH("zone/1/0/status"),
@@ -35,20 +35,28 @@ int main(void)
 {
 	struct sigaction new_sa, old_sa;
 	time_t next = time(NULL) + INTERVAL;
-	mqttsn_t _ctx;
-	mqttsn_t *ctx = &_ctx;
+	mqttsn_client_t _ctx;
+	mqttsn_client_t *ctx = &_ctx;
 
 	new_sa.sa_handler = break_handler;
 	sigemptyset(&new_sa.sa_mask);
 	new_sa.sa_flags = 0;
 	sigaction(SIGINT, &new_sa, &old_sa);
 
-	mqttsn_init(ctx, "test1", topics);
+	packet_init();
+	mqttsn_client_init(ctx, "test1", topics, packet_send);
 	mqttsn_connect(ctx);
 	while (!quit) {
+		char buf[MQTTSN_MAX_PACKET];
+		int size;
+
+		/* Poll for incoming packets. Call handler on packet arrival
+		 * or every second */
 		packet_poll(1000);
-		mqttsn_handler(ctx);
-		switch (mqttsn_get_state(ctx)) {
+		size = packet_recv(buf, sizeof(buf));
+		mqttsn_client_handler(ctx, (size < 0) ? NULL : buf, size);
+
+		switch (mqttsn_get_client_state(ctx)) {
 		case mqttsnDisconnected:
 			// try to (re-)connect
 			if (time(NULL) >= next) {
@@ -60,8 +68,8 @@ int main(void)
 			// do publish stuff
 			if (time(NULL) >= next) {
 				next = time(NULL) + INTERVAL;
-				mqttsn_disconnect(ctx, 0);
-#if 0
+//				mqttsn_disconnect(ctx, 0);
+#if 1
 				mqttsn_publish(ctx, 0, "hello", 0);
 				mqttsn_publish(ctx, 1, "world", 0);
 				mqttsn_publish(ctx, 2, "qos", 1);

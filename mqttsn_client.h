@@ -21,13 +21,10 @@ typedef uint32_t time_t;
 extern uint32_t get_seconds();
 #endif
 
-#define MQTTSN_MAX_PACKET			64
-#define MQTTSN_MAX_CLIENT_ID		8
-#define MQTTSN_MAX_TOPICS			16
-
-#define MQTTSN_N_RETRY				3
-#define MQTTSN_T_RETRY				5	/* seconds */
-#define MQTTSN_KEEP_ALIVE			10	/* seconds */
+/*! Maximum length of client ID string */
+#define MQTTSN_MAX_CLIENT_ID		16
+/*! Maximum number of publish/subscribe topics */
+#define MQTTSN_MAX_CLIENT_TOPICS	16
 
 typedef enum {
 	mqttsnDisconnected = 0,
@@ -36,44 +33,75 @@ typedef enum {
 	mqttsnConnected,
 	mqttsnBusy,
 	mqttsnDisconnecting,
-} mqttsn_state_t;
+} mqttsn_client_state_t;
 
-#define MQTTSN_REG_PUBLISH		(0 << 7)
-#define MQTTSN_REG_SUBSCRIBE	(1 << 7)
+#define MQTTSN_REG_PUBLISH			(0 << 7)
+#define MQTTSN_REG_SUBSCRIBE		(1 << 7)
 
-#define MQTTSN_REG_QOS_MASK		(3 << 0)
+#define MQTTSN_REG_QOS_MASK			(3 << 0)
 
 typedef struct {
 	const char *topic;
 	uint8_t flags;
-} mqttsn_topic_t;
+} mqttsn_client_topic_t;
 
 #define PUBLISH(topic)				{ topic, MQTTSN_REG_PUBLISH}
 #define SUBSCRIBE(topic,qos)		{ topic, MQTTSN_REG_SUBSCRIBE | ((qos) & MQTTSN_REG_QOS_MASK) }
 
+typedef int (*mqttsn_send_callback_t)(const char *buf, size_t size);
+
 typedef struct {
-	mqttsn_state_t	state;								/*< Current state machine state */
-	unsigned int	count;								/*< General purpose counter used in some states */
-	char			message[MQTTSN_MAX_PACKET];			/*< Current outgoing message (where we may retry) */
-	unsigned int	n_retries;							/*< Number of retries remaining */
-	time_t			t_retry;							/*< Timeout for current attempt */
-	time_t			next_ping;							/*< Time for next PINGRESP to satisfy keep-alive */
+	mqttsn_client_state_t	state;						/*< Current state machine state */
+	unsigned int			count;						/*< General purpose counter used in some states */
+	char					message[MQTTSN_MAX_PACKET];	/*< Current outgoing message (where we may retry) */
+	unsigned int			n_retries;					/*< Number of retries remaining */
+	time_t					t_retry;					/*< Timeout for current attempt */
+	time_t					next_ping;					/*< Time for next PINGRESP to satisfy keep-alive */
 
 	/* Topic registry */
-	const mqttsn_topic_t	*topics;					/*< Pointer to application supplied topic dictionary */
-	uint16_t		topic_ids[MQTTSN_MAX_TOPICS];
-	int				is_registered;						/*< Used for skipping registration if we were asleep */
+	const mqttsn_client_topic_t	*topics;				/*< Pointer to application supplied topic dictionary */
+	uint16_t				topic_ids[MQTTSN_MAX_CLIENT_TOPICS];
+	int						is_registered;				/*< Used for skipping registration if we were asleep */
 
 	/* Config */
-	char			client_id[MQTTSN_MAX_CLIENT_ID];	/*< Client ID sent on connect */
-} mqttsn_t;
+	char					client_id[MQTTSN_MAX_CLIENT_ID];	/*< Client ID sent on connect */
 
-int mqttsn_init(mqttsn_t *ctx, const char *client_id, const mqttsn_topic_t *topics);
-int mqttsn_handler(mqttsn_t *ctx);
-mqttsn_state_t mqttsn_get_state(mqttsn_t *ctx);
+	/* Callbacks */
+	mqttsn_send_callback_t	cb_send;
+} mqttsn_client_t;
 
-void mqttsn_connect(mqttsn_t *ctx);
-void mqttsn_disconnect(mqttsn_t *ctx, uint16_t duration);
+/*!
+ * Initialise the MQTT-SN client
+ *
+ * \param	ctx			Pointer to driver context
+ * \param	client_id	Pointer to string to be used as client ID when connecting
+ * \param	topics		Pointer to array of topics for publish/subscribe
+ * \param	cb_send		Callback to send an outgoing packet
+ * \return				0 on success or -ve error code
+ */
+int mqttsn_client_init(mqttsn_client_t *ctx, const char *client_id,
+		const mqttsn_client_topic_t *topics, mqttsn_send_callback_t cb_send);
+
+/*!
+ * State machine - must be called at minimum 1 second intervals or
+ * when a new packet arrives
+ *
+ * \param	ctx			Pointer to driver context
+ * \param	buf			Pointer to incoming packet buffer (may be NULL if periodic call)
+ * \param	size		Size of incoming packet (or 0 for periodic call)
+ */
+void mqttsn_client_handler(mqttsn_client_t *ctx, const char *buf, size_t size);
+
+/*!
+ * Returns current state machine state
+ * \return				State
+ */
+mqttsn_client_state_t mqttsn_get_client_state(mqttsn_client_t *ctx);
+
+
+
+void mqttsn_connect(mqttsn_client_t *ctx);
+void mqttsn_disconnect(mqttsn_client_t *ctx, uint16_t duration);
 
 /*!
  * \param ctx			Pointer to driver context
@@ -81,6 +109,6 @@ void mqttsn_disconnect(mqttsn_t *ctx, uint16_t duration);
  * \param qos			QoS level (0 or 1) FIXME: support -1 and 2?
  * \param data			String to publish
  */
-void mqttsn_publish(mqttsn_t *ctx, unsigned int topic_index, const char *data, int qos);
+void mqttsn_publish(mqttsn_client_t *ctx, unsigned int topic_index, const char *data, int qos);
 
 #endif /* MQTTSN_CLIENT_H_ */
