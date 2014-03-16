@@ -9,7 +9,7 @@
 
 #include "common.h"
 #include "packet.h"
-#include "mqttsn.h"
+#include "mqttsn_client.h"
 
 // FIXME: Not sure what's required here - look at mqtt-sn-tools for comparison
 //#define SEND_KEEP_ALIVE

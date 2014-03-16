@@ -9,7 +9,7 @@
 
 #include "common.h"
 #include "packet.h"
-#include "mqttsn.h"
+#include "mqttsn_client.h"
 
 #define INTERVAL 5
 
@@ -23,7 +23,7 @@ static const mqttsn_topic_t topics[] = {
 #endif
 	SUBSCRIBE("zone/1/target", 0),
 	SUBSCRIBE("zone/1/message", 0),
-	NULL
+	{NULL}
 };
 
 static void break_handler(int signum)
@@ -67,6 +67,8 @@ int main(void)
 				mqttsn_publish(ctx, 2, "qos", 1);
 #endif
 			}
+			break;
+		default:
 			break;
 		}
 	}
