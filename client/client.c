@@ -13,9 +13,6 @@
 // FIXME: Not sure what's required here - look at mqtt-sn-tools for comparison
 //#define SEND_KEEP_ALIVE
 
-#define mqttsn_htons(a)		(((uint16_t)a >> 8) | ((uint16_t)a << 8))
-#define mqttsn_ntohs(a)		mqttsn_htons(a)
-
 #ifdef DEBUG
 // for debugging state changes
 static const char *states[] = {

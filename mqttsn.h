@@ -11,10 +11,23 @@
 #include <stddef.h>
 #include <stdint.h>
 
+#define mqttsn_htons(a)		(((uint16_t)a >> 8) | ((uint16_t)a << 8))
+#define mqttsn_ntohs(a)		mqttsn_htons(a)
+
+/*! Maximum length of client ID string */
+#define MQTTSN_MAX_CLIENT_ID		16
+/*! Maximum number of publish/subscribe topics */
+#define MQTTSN_MAX_CLIENT_TOPICS	16
+
 #define MQTTSN_MAX_PACKET			64
 
-#define MQTTSN_N_RETRY				3
+#define MQTTSN_T_ADV				600	/* seconds */
+#define MQTTSN_N_ADV				3
+#define MQTTSN_T_SEARCHGW			5
+#define MQTTSN_T_GWINFO				5
+#define MQTTSN_T_WAIT				300 /* seconds */
 #define MQTTSN_T_RETRY				5	/* seconds */
+#define MQTTSN_N_RETRY				3
 #define MQTTSN_KEEP_ALIVE			10	/* seconds */
 
 /* MsgType */

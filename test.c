@@ -31,6 +31,9 @@ static void break_handler(int signum)
 	quit = 1;
 }
 
+#define HOST		"localhost"
+#define PORT		"1883"
+
 int main(void)
 {
 	struct sigaction new_sa, old_sa;
@@ -43,7 +46,7 @@ int main(void)
 	new_sa.sa_flags = 0;
 	sigaction(SIGINT, &new_sa, &old_sa);
 
-	packet_init();
+	packet_init(HOST, PORT);
 	mqttsn_client_init(ctx, "test1", topics, packet_send);
 	mqttsn_connect(ctx);
 	while (!quit) {

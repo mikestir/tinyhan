@@ -8,9 +8,14 @@
 #ifndef PACKET_H_
 #define PACKET_H_
 
+#include <stdint.h>
 #include <stddef.h>
 
-int packet_init(void);
+/*!
+ * \param	host		Gateway address or NULL for server
+ * \param	port		Gateway port
+ */
+int packet_init(const char *host, const char *port);
 
 /*!
  * Poll for incoming data with timeout
@@ -31,5 +36,12 @@ int packet_send(const char *buf, size_t size);
  * \return				Number of bytes returned, -1 on error or no packet available
  */
 int packet_recv(char *buf, size_t maxsize);
+
+
+/* FIXME: Extensions for server to be incorporated */
+int packet_init_server(void);
+int packet_sendto(uint64_t tag, const char *buf, size_t size);
+int packet_recvfrom(uint64_t *tag, char *buf, size_t maxsize);
+
 
 #endif /* PACKET_H_ */

@@ -21,11 +21,6 @@ typedef uint32_t time_t;
 extern uint32_t get_seconds();
 #endif
 
-/*! Maximum length of client ID string */
-#define MQTTSN_MAX_CLIENT_ID		16
-/*! Maximum number of publish/subscribe topics */
-#define MQTTSN_MAX_CLIENT_TOPICS	16
-
 typedef enum {
 	mqttsnDisconnected = 0,
 	mqttsnConnecting,
@@ -45,10 +40,10 @@ typedef struct {
 	uint8_t flags;
 } mqttsn_client_topic_t;
 
+typedef int (*mqttsn_client_send_callback_t)(const char *buf, size_t size);
+
 #define PUBLISH(topic)				{ topic, MQTTSN_REG_PUBLISH}
 #define SUBSCRIBE(topic,qos)		{ topic, MQTTSN_REG_SUBSCRIBE | ((qos) & MQTTSN_REG_QOS_MASK) }
-
-typedef int (*mqttsn_send_callback_t)(const char *buf, size_t size);
 
 typedef struct {
 	mqttsn_client_state_t	state;						/*< Current state machine state */
@@ -67,7 +62,7 @@ typedef struct {
 	char					client_id[MQTTSN_MAX_CLIENT_ID];	/*< Client ID sent on connect */
 
 	/* Callbacks */
-	mqttsn_send_callback_t	cb_send;
+	mqttsn_client_send_callback_t	cb_send;
 } mqttsn_client_t;
 
 /*!
@@ -80,7 +75,7 @@ typedef struct {
  * \return				0 on success or -ve error code
  */
 int mqttsn_client_init(mqttsn_client_t *ctx, const char *client_id,
-		const mqttsn_client_topic_t *topics, mqttsn_send_callback_t cb_send);
+		const mqttsn_client_topic_t *topics, mqttsn_client_send_callback_t cb_send);
 
 /*!
  * State machine - must be called at minimum 1 second intervals or
