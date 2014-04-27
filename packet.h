@@ -14,8 +14,9 @@
 /*!
  * \param	host		Gateway address or NULL for server
  * \param	port		Gateway port
+ * \return				Server socket fd (where applicable)
  */
-int packet_init(const char *host, const char *port);
+int packet_init(const char *host, uint16_t port);
 
 /*!
  * Poll for incoming data with timeout
@@ -39,7 +40,6 @@ int packet_recv(char *buf, size_t maxsize);
 
 
 /* FIXME: Extensions for server to be incorporated */
-int packet_init_server(void);
 int packet_sendto(uint64_t tag, const char *buf, size_t size);
 int packet_recvfrom(uint64_t *tag, char *buf, size_t maxsize);
 

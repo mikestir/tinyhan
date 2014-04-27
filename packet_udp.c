@@ -15,7 +15,7 @@
 #include <poll.h>
 #include <arpa/inet.h>
 
-#undef DEBUG
+//#undef DEBUG
 #include "common.h"
 #include "packet.h"
 
@@ -24,10 +24,11 @@
  * only one) */
 static int sockfd;
 
-int packet_init(const char *host, const char *port)
+int packet_init(const char *host, uint16_t port)
 {
 	struct addrinfo hints;
 	struct addrinfo *addr, *thisaddr;
+	char service[8];
 
 	/* Resolve host address */
 	memset(&hints, 0, sizeof(hints));
@@ -37,7 +38,8 @@ int packet_init(const char *host, const char *port)
 	if (host == NULL) {
 		hints.ai_flags = AI_PASSIVE; /* To use INADDR_ANY */
 	}
-	if (getaddrinfo(host, port, &hints, &addr) != 0) {
+	snprintf(service, sizeof(service),"%u", port);
+	if (getaddrinfo(host, service, &hints, &addr) != 0) {
 		ERROR("getaddrinfo\n");
 		return -1;
 	}
@@ -49,13 +51,13 @@ int packet_init(const char *host, const char *port)
 			continue;
 		if (host) {
 			/* Connect to remote host */
-			INFO("Connecting to remote host: %s:%s\n", host, port);
+			INFO("Connecting to remote host: %s:%u\n", host, port);
 			if (connect(sockfd, thisaddr->ai_addr, thisaddr->ai_addrlen) == 0) {
 				break;
 			}
 		} else {
 			/* Bind for server operation */
-			INFO("Binding server to port: %s\n", port);
+			INFO("Binding server to port: %u\n", port);
 			if (bind(sockfd, thisaddr->ai_addr, thisaddr->ai_addrlen) == 0) {
 				break;
 			}
@@ -69,7 +71,7 @@ int packet_init(const char *host, const char *port)
 		return -1;
 	}
 
-	return 0;
+	return sockfd;
 }
 
 int packet_poll(unsigned int timeout)

@@ -32,7 +32,7 @@ static void break_handler(int signum)
 }
 
 #define HOST		"localhost"
-#define PORT		"1883"
+#define PORT		1883
 
 int main(void)
 {
