@@ -5,8 +5,8 @@
  *      Author: mike
  */
 
-#ifndef MQTTSN_CLIENT_H_
-#define MQTTSN_CLIENT_H_
+#ifndef CLIENT_H_
+#define CLIENT_H_
 
 #include <stddef.h>
 #include <stdint.h>
@@ -28,7 +28,12 @@ typedef enum {
 	mqttsnConnected,
 	mqttsnBusy,
 	mqttsnDisconnecting,
-} mqttsn_client_state_t;
+} mqttsn_c_state_t;
+
+typedef enum {
+	mqttsnOK = 0,
+	mqttsnError,
+} mqttsn_c_result_t;
 
 #define MQTTSN_REG_PUBLISH			(0 << 7)
 #define MQTTSN_REG_SUBSCRIBE		(1 << 7)
@@ -38,23 +43,52 @@ typedef enum {
 typedef struct {
 	const char *topic;
 	uint8_t flags;
-} mqttsn_client_topic_t;
-
-typedef int (*mqttsn_client_send_callback_t)(const char *buf, size_t size);
+} mqttsn_c_topic_t;
 
 #define PUBLISH(topic)				{ topic, MQTTSN_REG_PUBLISH}
 #define SUBSCRIBE(topic,qos)		{ topic, MQTTSN_REG_SUBSCRIBE | ((qos) & MQTTSN_REG_QOS_MASK) }
 
-typedef struct {
-	mqttsn_client_state_t	state;						/*< Current state machine state */
+struct mqttsn_c;
+
+/*!
+ * Called to send an outbound packet to the network - must be implemented
+ *
+ * \param buf			Pointer to data buffer
+ * \param size			Size of message in bytes
+ * \return				Number of bytes actually sent, or -ve error code
+ */
+typedef int (*mqttsn_c_send_callback_t)(const char *buf, size_t size);
+
+/*!
+ * Called when an inbound publish is received from the gateway
+ *
+ * \param ctx			Pointer to driver context
+ * \param topic_index	Index of subscription in table (provided during init)
+ * \param data			Payload data
+ * \param size			Length of payload
+ */
+typedef void (*mqttsn_c_publish_callback_t)(struct mqttsn_c *ctx, unsigned int topic_index, const char *data, size_t size);
+
+/*!
+ * Called when an outbound QoS >= 1 publish has completed (successfully or not)
+ *
+ * \param ctx			Pointer to driver context
+ * \param msg_id		Message serial number as returned by call to mqttsn_c_publish
+ * \param result		Result code
+ */
+typedef void (*mqttsn_c_puback_callback_t)(struct mqttsn_c *ctx, uint16_t msg_id, mqttsn_c_result_t result);
+
+typedef struct mqttsn_c {
+	mqttsn_c_state_t	state;						/*< Current state machine state */
 	unsigned int			count;						/*< General purpose counter used in some states */
 	char					message[MQTTSN_MAX_PACKET];	/*< Current outgoing message (where we may retry) */
 	unsigned int			n_retries;					/*< Number of retries remaining */
 	time_t					t_retry;					/*< Timeout for current attempt */
 	time_t					next_ping;					/*< Time for next PINGRESP to satisfy keep-alive */
+	uint16_t				next_id;					/*< Message ID for next message */
 
 	/* Topic registry */
-	const mqttsn_client_topic_t	*topics;				/*< Pointer to application supplied topic dictionary */
+	const mqttsn_c_topic_t	*topics;				/*< Pointer to application supplied topic dictionary */
 	uint16_t				topic_ids[MQTTSN_MAX_CLIENT_TOPICS];
 	int						is_registered;				/*< Used for skipping registration if we were asleep */
 
@@ -62,8 +96,10 @@ typedef struct {
 	char					client_id[MQTTSN_MAX_CLIENT_ID];	/*< Client ID sent on connect */
 
 	/* Callbacks */
-	mqttsn_client_send_callback_t	cb_send;
-} mqttsn_client_t;
+	mqttsn_c_send_callback_t		cb_send;
+	mqttsn_c_publish_callback_t	cb_publish;
+	mqttsn_c_puback_callback_t		cb_puback;
+} mqttsn_c_t;
 
 /*!
  * Initialise the MQTT-SN client
@@ -74,8 +110,11 @@ typedef struct {
  * \param	cb_send		Callback to send an outgoing packet
  * \return				0 on success or -ve error code
  */
-int mqttsn_client_init(mqttsn_client_t *ctx, const char *client_id,
-		const mqttsn_client_topic_t *topics, mqttsn_client_send_callback_t cb_send);
+int mqttsn_c_init(mqttsn_c_t *ctx, const char *client_id,
+		const mqttsn_c_topic_t *topics, mqttsn_c_send_callback_t cb_send);
+
+void mqttsn_c_set_publish_callback(mqttsn_c_t *ctx, mqttsn_c_publish_callback_t cb);
+void mqttsn_c_set_puback_callback(mqttsn_c_t *ctx, mqttsn_c_puback_callback_t cb);
 
 /*!
  * State machine - must be called at minimum 1 second intervals or
@@ -85,25 +124,25 @@ int mqttsn_client_init(mqttsn_client_t *ctx, const char *client_id,
  * \param	buf			Pointer to incoming packet buffer (may be NULL if periodic call)
  * \param	size		Size of incoming packet (or 0 for periodic call)
  */
-void mqttsn_client_handler(mqttsn_client_t *ctx, const char *buf, size_t size);
+void mqttsn_c_handler(mqttsn_c_t *ctx, const char *buf, size_t size);
 
 /*!
  * Returns current state machine state
  * \return				State
  */
-mqttsn_client_state_t mqttsn_get_client_state(mqttsn_client_t *ctx);
+mqttsn_c_state_t mqttsn_c_get_state(mqttsn_c_t *ctx);
 
-
-
-void mqttsn_connect(mqttsn_client_t *ctx);
-void mqttsn_disconnect(mqttsn_client_t *ctx, uint16_t duration);
+void mqttsn_c_connect(mqttsn_c_t *ctx);
+void mqttsn_c_disconnect(mqttsn_c_t *ctx, uint16_t duration);
 
 /*!
  * \param ctx			Pointer to driver context
- * \param topic_index	Index of topic in registry (as defined on connection)
+ * \param topic_index	Index of topic in registration table (supplied on init)
  * \param qos			QoS level (0 or 1) FIXME: support -1 and 2?
- * \param data			String to publish
+ * \param data			Content to publish
+ * \param size			Size of content
+ * \return				Assigned message ID (serial number)
  */
-void mqttsn_publish(mqttsn_client_t *ctx, unsigned int topic_index, const char *data, int qos);
+uint16_t mqttsn_c_publish(mqttsn_c_t *ctx, unsigned int topic_index, int qos, const char *data, size_t size);
 
-#endif /* MQTTSN_CLIENT_H_ */
+#endif /* CLIENT_H_ */

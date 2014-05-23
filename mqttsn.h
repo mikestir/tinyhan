@@ -11,7 +11,7 @@
 #include <stddef.h>
 #include <stdint.h>
 
-#define mqttsn_htons(a)		(((uint16_t)a >> 8) | ((uint16_t)a << 8))
+#define mqttsn_htons(a)		(((uint16_t)(a) >> 8) | ((uint16_t)(a) << 8))
 #define mqttsn_ntohs(a)		mqttsn_htons(a)
 
 /*! Maximum length of client ID string */

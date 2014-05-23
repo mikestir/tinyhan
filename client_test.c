@@ -9,13 +9,13 @@
 
 #include "common.h"
 #include "packet.h"
-#include "mqttsn_client.h"
+#include "client/client.h"
 
-#define INTERVAL 5
+#define INTERVAL 60
 
 static volatile int quit = 0;
 
-static const mqttsn_client_topic_t topics[] = {
+static const mqttsn_c_topic_t topics[] = {
 #if 1
 	PUBLISH("zone/1/0/temp"),
 	PUBLISH("zone/1/0/status"),
@@ -38,8 +38,8 @@ int main(void)
 {
 	struct sigaction new_sa, old_sa;
 	time_t next = time(NULL) + INTERVAL;
-	mqttsn_client_t _ctx;
-	mqttsn_client_t *ctx = &_ctx;
+	mqttsn_c_t _ctx;
+	mqttsn_c_t *ctx = &_ctx;
 
 	new_sa.sa_handler = break_handler;
 	sigemptyset(&new_sa.sa_mask);
@@ -47,8 +47,8 @@ int main(void)
 	sigaction(SIGINT, &new_sa, &old_sa);
 
 	packet_init(HOST, PORT);
-	mqttsn_client_init(ctx, "test1", topics, packet_send);
-	mqttsn_connect(ctx);
+	mqttsn_c_init(ctx, "test1", topics, packet_send);
+	mqttsn_c_connect(ctx);
 	while (!quit) {
 		char buf[MQTTSN_MAX_PACKET];
 		int size;
@@ -57,25 +57,25 @@ int main(void)
 		 * or every second */
 		packet_poll(1000);
 		size = packet_recv(buf, sizeof(buf));
-		mqttsn_client_handler(ctx, (size < 0) ? NULL : buf, size);
+		mqttsn_c_handler(ctx, (size < 0) ? NULL : buf, size);
 
-		switch (mqttsn_get_client_state(ctx)) {
+		switch (mqttsn_c_get_state(ctx)) {
 		case mqttsnDisconnected:
 			// try to (re-)connect
 			if (time(NULL) >= next) {
 				next = time(NULL) + INTERVAL;
-				mqttsn_connect(ctx);
+				mqttsn_c_connect(ctx);
 			}
 			break;
 		case mqttsnConnected:
 			// do publish stuff
 			if (time(NULL) >= next) {
 				next = time(NULL) + INTERVAL;
-//				mqttsn_disconnect(ctx, 0);
+//				mqttsn_c_disconnect(ctx, 0);
 #if 1
-				mqttsn_publish(ctx, 0, "hello", 0);
-				mqttsn_publish(ctx, 1, "world", 0);
-				mqttsn_publish(ctx, 2, "qos", 1);
+				mqttsn_c_publish(ctx, 0, 0, "hello", 5);
+				mqttsn_c_publish(ctx, 1, 0, "world", 5);
+				mqttsn_c_publish(ctx, 2, 1, "qos", 3);
 #endif
 			}
 			break;
@@ -84,7 +84,7 @@ int main(void)
 		}
 	}
 
-	mqttsn_disconnect(ctx, 0);
+	mqttsn_c_disconnect(ctx, 0);
 	sigaction(SIGINT, &old_sa, NULL);
 
 	return 0;
