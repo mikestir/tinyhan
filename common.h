@@ -10,6 +10,8 @@
 
 #include <stdio.h>
 
+typedef unsigned int boolean_t;
+
 #ifndef TRUE
 #define TRUE ~0
 #endif
@@ -40,5 +42,8 @@
 #define ERROR(a,...)
 #define FUNCTION_TRACE
 #endif
+
+#define PACKED			__attribute__((packed))
+#define ARRAY_SIZE(a)	(sizeof(a) / sizeof(a[0]))
 
 #endif /* COMMON_H_ */

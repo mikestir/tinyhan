@@ -79,7 +79,7 @@ typedef void (*mqttsn_c_publish_callback_t)(struct mqttsn_c *ctx, unsigned int t
 typedef void (*mqttsn_c_puback_callback_t)(struct mqttsn_c *ctx, uint16_t msg_id, mqttsn_c_result_t result);
 
 typedef struct mqttsn_c {
-	mqttsn_c_state_t	state;						/*< Current state machine state */
+	mqttsn_c_state_t		state;						/*< Current state machine state */
 	unsigned int			count;						/*< General purpose counter used in some states */
 	char					message[MQTTSN_MAX_PACKET];	/*< Current outgoing message (where we may retry) */
 	unsigned int			n_retries;					/*< Number of retries remaining */
@@ -88,7 +88,7 @@ typedef struct mqttsn_c {
 	uint16_t				next_id;					/*< Message ID for next message */
 
 	/* Topic registry */
-	const mqttsn_c_topic_t	*topics;				/*< Pointer to application supplied topic dictionary */
+	const mqttsn_c_topic_t	*topics;					/*< Pointer to application supplied topic dictionary */
 	uint16_t				topic_ids[MQTTSN_MAX_CLIENT_TOPICS];
 	int						is_registered;				/*< Used for skipping registration if we were asleep */
 

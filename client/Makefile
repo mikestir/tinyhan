@@ -1,10 +1,12 @@
 TARGET = mqttsn_client
 
-OBJS = client/client.o packet_udp.o client_test.o
+OBJS = client_test.o
+OBJS += client.o
+OBJS += ../tinymac.o ../phy-udp.o
 
 DEBUG_FLAGS = -g
 CC = gcc
-CFLAGS = -Wall $(DEBUG_FLAGS) -DDEBUG=3 -I. -Iclient
+CFLAGS = -Wall $(DEBUG_FLAGS) -DDEBUG=3 -I..
 LDFLAGS = $(DEBUG_FLAGS)
 
 all:	$(TARGET)
@@ -20,4 +22,3 @@ clean:
 	
 .PHONY:	clean
 
-	
