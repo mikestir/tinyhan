@@ -34,17 +34,20 @@ void rx_func(const char *buf, size_t size)
 	}
 
 	switch (hdr->flags & TINYMAC_FLAGS_TYPE_MASK) {
-	case tinymacType_PeriodicBeacon:
-	case tinymacType_SolicitedBeacon: {
+	case tinymacType_Beacon: {
 		const tinymac_beacon_t *beacon = (const tinymac_beacon_t*)hdr->payload;
 		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_beacon_t)) {
 			log(BG_RED FG_WHITE "SHORT (Beacon)", hdr);
 			return;
 		}
 		if (beacon->flags & TINYMAC_BEACON_FLAGS_PERMIT_ATTACH) {
-			log(FG_GREEN "Beacon from %02X %016llX (Attach permitted)", hdr, hdr->net_id, beacon->uuid);
+			log(FG_GREEN "%s Beacon from %02X %016llX (Attach permitted)", hdr,
+					(beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "Sync" : "Advertisement",
+					hdr->net_id, beacon->uuid);
 		} else {
-			log(FG_YELLOW "Beacon from %02X %016llX", hdr, hdr->net_id, beacon->uuid);
+			log(FG_YELLOW "%s Beacon from %02X %016llX", hdr,
+					(beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "Sync" : "Advertisement",
+					hdr->net_id, beacon->uuid);
 		}
 	} break;
 	case tinymacType_BeaconRequest: {
@@ -53,26 +56,26 @@ void rx_func(const char *buf, size_t size)
 	case tinymacType_Ack: {
 		log("Acknowledgement for [%03u]", hdr, hdr->seq);
 	} break;
-	case tinymacType_AttachRequest: {
-		const tinymac_attach_request_t *attach = (const tinymac_attach_request_t*)hdr->payload;
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_attach_request_t)) {
-			log(BG_RED FG_WHITE "SHORT (attach request)", hdr);
+	case tinymacType_RegistrationRequest: {
+		const tinymac_registration_request_t *attach = (const tinymac_registration_request_t*)hdr->payload;
+		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_registration_request_t)) {
+			log(BG_RED FG_WHITE "SHORT (registration request)", hdr);
 			return;
 		}
-		log("Attachment request from %016llX", hdr, attach->uuid);
+		log("Registration request from %016llX", hdr, attach->uuid);
 	} break;
-	case tinymacType_DetachRequest: {
-		const tinymac_detach_request_t *detach = (const tinymac_detach_request_t*)hdr->payload;
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_detach_request_t)) {
+	case tinymacType_DeregistrationRequest: {
+		const tinymac_deregistration_request_t *detach = (const tinymac_deregistration_request_t*)hdr->payload;
+		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_deregistration_request_t)) {
 			log(BG_RED FG_WHITE "SHORT (detach request)", hdr);
 			return;
 		}
 		log("Detachment request from %016llX (reason=%u)", hdr, detach->uuid, detach->reason);
 	} break;
-	case tinymacType_AddressResponse: {
-		const tinymac_address_response_t *addr = (const tinymac_address_response_t*)hdr->payload;
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_address_response_t)) {
-			log(BG_RED FG_WHITE "SHORT (address response)", hdr);
+	case tinymacType_RegistrationResponse: {
+		const tinymac_registration_response_t *addr = (const tinymac_registration_response_t*)hdr->payload;
+		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_registration_response_t)) {
+			log(BG_RED FG_WHITE "SHORT (address update)", hdr);
 			return;
 		}
 		log(BG_GREEN FG_RED "Address assignment %02X %02X to device %016llX", hdr, hdr->net_id, addr->addr, addr->uuid);

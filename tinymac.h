@@ -11,7 +11,6 @@
 #include <stdint.h>
 #include "common.h"
 
-
 /*!
  * Define to disable coordinator functionality (reduced code size), otherwise
  * this is configurable at run time.
@@ -44,13 +43,13 @@ typedef struct {
 #define TINYMAC_FLAGS_TYPE_MASK				(31 << 0)
 
 typedef enum {
-	tinymacType_PeriodicBeacon = 0,
-	tinymacType_SolicitedBeacon,
+	tinymacType_Beacon = 0,
+	tinymacType_Reserved1,
 	tinymacType_BeaconRequest,
 	tinymacType_Ack,
-	tinymacType_AttachRequest,
-	tinymacType_DetachRequest,
-	tinymacType_AddressResponse,
+	tinymacType_RegistrationRequest,
+	tinymacType_DeregistrationRequest,
+	tinymacType_RegistrationResponse,
 	tinymacType_Ping,
 	tinymacType_Reserved8,
 	tinymacType_Reserved9,
@@ -89,7 +88,8 @@ typedef struct {
 #define TINYMAC_BEACON_FLAGS_FSECONDS_SHIFT		6
 #define TINYMAC_BEACON_FLAGS_FSECONDS_MASK		(3 << 6)
 
-#define TINYMAC_BEACON_FLAGS_PERMIT_ATTACH		(1 << 0)
+#define TINYMAC_BEACON_FLAGS_PERMIT_ATTACH		(1 << 1)
+#define TINYMAC_BEACON_FLAGS_SYNC				(1 << 0)
 
 #define TINYMAC_BEACON_INTERVAL_OFFSET_SHIFT	4
 #define TINYMAC_BEACON_INTERVAL_OFFSET_MASK		(15 << 4)
@@ -101,38 +101,43 @@ typedef struct {
 typedef struct {
 	uint64_t		uuid;
 	uint16_t		flags;
-} PACKED tinymac_attach_request_t;
+} PACKED tinymac_registration_request_t;
 
 #define TINYMAC_ATTACH_FLAGS_SLEEPY				(1 << 0)
 
 typedef struct {
 	uint64_t		uuid;
 	uint8_t			reason;
-} PACKED tinymac_detach_request_t;
+} PACKED tinymac_deregistration_request_t;
 
 typedef enum {
-	tinymacDetachReason_User = 0,
-	tinymacDetachReason_PowerDown,
-} tinymac_detach_reason_t;
+	tinymacDeregReason_User = 0,
+	tinymacDeregReason_PowerDown,
+} tinymac_dereg_reason_t;
 
 typedef struct {
 	uint64_t		uuid;
 	uint8_t			addr;
 	uint8_t			status;
-} PACKED tinymac_address_response_t;
+} PACKED tinymac_registration_response_t;
 
 typedef enum {
-	tinymacAddressStatus_Success = 0,
-	tinymacAddressStatus_AccessDenied,
-	tinymacAddressStatus_NetworkFull,
-	tinymacAddressStatus_Shutdown,
-	tinymacAddressStatus_Admin,
-} tinymac_address_status_t;
+	tinymacRegistrationStatus_Success = 0,
+	tinymacRegistrationStatus_AccessDenied,
+	tinymacRegistrationStatus_NetworkFull,
+	tinymacRegistrationStatus_Shutdown,
+	tinymacRegistrationStatus_Admin,
+} tinymac_registration_status_t;
 
 
 typedef enum {
-	tinymacState_Idle = 0,
-	tinymacState_Attach,
+	/* Client states */
+	tinymacState_Unregistered = 0,
+	tinymacState_BeaconRequest,
+	tinymacState_Registering,
+	tinymacState_Registered,
+
+	/* Send states */
 	tinymacState_WaitAck,
 	tinymacState_Ack,
 	tinymacState_Nak,
@@ -141,31 +146,34 @@ typedef enum {
 typedef void (*tinymac_recv_cb_t)(uint8_t src, const char *payload, size_t size);
 
 typedef struct {
-	uint64_t		uuid;
-	uint8_t			net_id;
-	uint8_t			addr;
-	uint8_t			dseq;
+	uint64_t			uuid;			/*< Assigned unit identifier */
+	uint8_t				net_id;			/*< Current network ID (if registered) */
+	uint8_t				addr;			/*< Current device short address (if registered) */
+	uint8_t				dseq;			/*< Current data sequence number */
 
-	uint8_t			coord_addr;
-	uint32_t		next_event;
-	tinymac_state_t	state;
+	uint8_t				coord_addr;		/*< Short address of coordinator (if registered) */
+
+	tinymac_state_t		state;			/*< Current MAC engine state */
+	tinymac_state_t		next_state;		/*< Scheduled state change */
+	uint32_t			timer;			/*< For timed state changes */
 
 #if TINYMAC_COORDINATOR_SUPPORT
-	uint8_t			bseq;
-	boolean_t		coord;
-	boolean_t		permit_attach;
+	uint8_t				bseq;			/*< Current beacon serial number (if registered) */
+	boolean_t			coord;			/*< Whether or not we are a coordinator */
+	boolean_t			permit_attach;	/*< Whether or not we are accepting registration requests */
 #endif
 
-	unsigned int		phy_mtu;
-	tinymac_recv_cb_t	rx_cb;
+	unsigned int		phy_mtu;		/*< MTU from PHY driver */
+	tinymac_recv_cb_t	rx_cb;			/*< MAC data receive callback */
 } tinymac_t;
 
 int tinymac_init(uint64_t uuid, boolean_t coord);
 
-void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
 void tinymac_process(void);
 
+void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
 void tinymac_permit_attach(boolean_t permit);
+
 int tinymac_send(uint8_t dest, const char *buf, size_t size);
 
 #endif /* MAC_H_ */
