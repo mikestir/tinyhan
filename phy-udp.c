@@ -59,6 +59,7 @@ static const uint16_t phy_crc_table[] = {
 
 static int phy_sock;
 static phy_recv_cb_t phy_recv_cb = NULL;
+static boolean_t phy_listening = FALSE;
 
 static void update_crc(uint16_t *crc, const uint8_t *buf, size_t size) {
 	while (size--) {
@@ -99,6 +100,10 @@ int phy_init(void)
 	setsockopt(phy_sock, IPPROTO_IP, IP_ADD_MEMBERSHIP, &group, sizeof(group));
 	setsockopt(phy_sock, IPPROTO_IP, IP_MULTICAST_LOOP, &one, sizeof(one));
 
+	/* Conceptual listen/standby mode simply throws away packets when we're supposed to
+	 * be asleep */
+	phy_listening = TRUE;
+
 	return 0;
 }
 
@@ -114,11 +119,13 @@ int phy_resume(void)
 
 int phy_listen(void)
 {
+	phy_listening = TRUE;
 	return 0;
 }
 
 int phy_standby(void)
 {
+	phy_listening = FALSE;
 	return 0;
 }
 
@@ -166,7 +173,7 @@ void phy_process(void)
 			return;
 		}
 
-		if (phy_recv_cb) {
+		if (phy_recv_cb && phy_listening) {
 			phy_recv_cb(payload, (size_t)size - 2);
 		}
 	}

@@ -129,43 +129,7 @@ typedef enum {
 	tinymacRegistrationStatus_Admin,
 } tinymac_registration_status_t;
 
-
-typedef enum {
-	/* Client states */
-	tinymacState_Unregistered = 0,
-	tinymacState_BeaconRequest,
-	tinymacState_Registering,
-	tinymacState_Registered,
-
-	/* Send states */
-	tinymacState_WaitAck,
-	tinymacState_Ack,
-	tinymacState_Nak,
-} tinymac_state_t;
-
 typedef void (*tinymac_recv_cb_t)(uint8_t src, const char *payload, size_t size);
-
-typedef struct {
-	uint64_t			uuid;			/*< Assigned unit identifier */
-	uint8_t				net_id;			/*< Current network ID (if registered) */
-	uint8_t				addr;			/*< Current device short address (if registered) */
-	uint8_t				dseq;			/*< Current data sequence number */
-
-	uint8_t				coord_addr;		/*< Short address of coordinator (if registered) */
-
-	tinymac_state_t		state;			/*< Current MAC engine state */
-	tinymac_state_t		next_state;		/*< Scheduled state change */
-	uint32_t			timer;			/*< For timed state changes */
-
-#if TINYMAC_COORDINATOR_SUPPORT
-	uint8_t				bseq;			/*< Current beacon serial number (if registered) */
-	boolean_t			coord;			/*< Whether or not we are a coordinator */
-	boolean_t			permit_attach;	/*< Whether or not we are accepting registration requests */
-#endif
-
-	unsigned int		phy_mtu;		/*< MTU from PHY driver */
-	tinymac_recv_cb_t	rx_cb;			/*< MAC data receive callback */
-} tinymac_t;
 
 int tinymac_init(uint64_t uuid, boolean_t coord);
 
@@ -174,6 +138,14 @@ void tinymac_process(void);
 void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
 void tinymac_permit_attach(boolean_t permit);
 
+/*!
+ * Send a data packet
+ *
+ * \param dest		Destination short address
+ * \param buf		Pointer to payload data
+ * \param size		Size of payload data
+ * \return			Sequence number or -ve error code
+ */
 int tinymac_send(uint8_t dest, const char *buf, size_t size);
 
 #endif /* MAC_H_ */

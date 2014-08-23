@@ -1,8 +1,7 @@
-TARGET = mqttsn_client
+TARGET = simplegateway
 
-OBJS = client_test.o
-OBJS += client.o
-OBJS += tinymac-node.o ../phy-udp.o
+OBJS = main.o
+OBJS += tinymac-hub.o ../phy-udp.o
 
 DEBUG_FLAGS = -g
 CC = gcc
