@@ -18,22 +18,21 @@
 typedef enum {
 	/* Client states */
 	tinymacState_Unregistered = 0,
-	tinymacState_BeaconRequest,
-	tinymacState_Registering,
+//	tinymacState_BeaconRequest,	/* not used by coordinator */
+//	tinymacState_Registering, /* not used by coordinator */
 	tinymacState_Registered,
+	tinymacState_SendPending,
+	tinymacState_WaitAck,
 } tinymac_state_t;
 
-#if DEBUG
 static const char *tinymac_states[] = {
 		"Unregistered",
-		"BeaconRequest",
-		"Registering",
+//		"BeaconRequest",
+//		"Registering",
 		"Registered",
+		"SendPending",
 		"WaitAck",
-		"Ack",
-		"Nak",
 };
-#endif
 
 static uint32_t get_timestamp(void)
 {
@@ -42,39 +41,29 @@ static uint32_t get_timestamp(void)
 	return (uint32_t)tv.tv_sec;
 }
 
-#if TINYMAC_COORDINATOR_SUPPORT
-#define TINYMAC_MAX_REGISTRATIONS		32
-#define TINYMAC_MAX_PAYLOAD				64
+#define TINYMAC_MAX_NODES				32
+#define TINYMAC_MAX_PAYLOAD				128
 
 typedef struct {
+	tinymac_state_t		state;
 	uint64_t			uuid;			/*< Unit identifier */
+	uint32_t			timer;			/*< Timer for state machine periodic events */
 	uint32_t			last_heard;		/*< Last heard time */
 	uint16_t			flags;			/*< Node flags (from registration) */
-	uint8_t				addr;			/*< Address slot */
+	uint8_t				addr;			/*< Short address */
 	size_t				pending_size;	/*< Size of pending outbound packet */
 	char				pending[TINYMAC_MAX_PAYLOAD];	/*< Pending outbound packet */
-} tinymac_registry_t;
-#endif
+} tinymac_node_t;
 
 typedef struct {
 	uint64_t			uuid;			/*< Assigned unit identifier */
 	uint8_t				net_id;			/*< Current network ID (if registered) */
 	uint8_t				addr;			/*< Current device short address (if registered) */
 	uint8_t				dseq;			/*< Current data sequence number */
-
-	uint8_t				coord_addr;		/*< Short address of coordinator (if registered) */
-
-	tinymac_state_t		state;			/*< Current MAC engine state */
-	tinymac_state_t		next_state;		/*< Scheduled state change */
-	uint32_t			timer;			/*< For timed state changes */
-
-#if TINYMAC_COORDINATOR_SUPPORT
 	uint8_t				bseq;			/*< Current beacon serial number (if registered) */
-	boolean_t			coord;			/*< Whether or not we are a coordinator */
 	boolean_t			permit_attach;	/*< Whether or not we are accepting registration requests */
 
-	tinymac_registry_t	slot[TINYMAC_MAX_REGISTRATIONS];
-#endif
+	tinymac_node_t		nodes[TINYMAC_MAX_NODES];
 
 	unsigned int		phy_mtu;		/*< MTU from PHY driver */
 	tinymac_recv_cb_t	rx_cb;			/*< MAC data receive callback */
@@ -82,6 +71,65 @@ typedef struct {
 
 static tinymac_t tinymac_ctx_;
 static tinymac_t *tinymac_ctx = &tinymac_ctx_;
+
+static void tinymac_dump_nodes(void)
+{
+	tinymac_node_t *node = tinymac_ctx->nodes;
+	unsigned int n;
+
+	printf("Network %02X\n", tinymac_ctx->net_id);
+	printf("Permit attach: %s\n\n", tinymac_ctx->permit_attach ? "Yes" : "No");
+	printf("Registered nodes:\n\n");
+
+	printf("**********************************************************\n");
+	printf("| Addr | UUID             | State           | Last Heard |\n");
+	printf("**********************************************************\n");
+	for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
+		if (node->uuid) {
+			printf("|  %02X  | %016llX | %15s | %10u |\n",
+				node->addr, node->uuid, tinymac_states[node->state], node->last_heard);
+		}
+	}
+}
+
+static tinymac_node_t* tinymac_get_node_by_addr(uint8_t addr)
+{
+	tinymac_node_t *node = tinymac_ctx->nodes;
+	unsigned int n;
+
+	for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
+		if (node->state > tinymacState_Unregistered && node->addr == addr) {
+			break;
+		}
+	}
+	return (n == TINYMAC_MAX_NODES) ? NULL : node;
+}
+
+static tinymac_node_t* tinymac_get_node_by_uuid(uint64_t uuid)
+{
+	tinymac_node_t *node = tinymac_ctx->nodes;
+	unsigned int n;
+
+	for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
+		if (node->uuid == uuid) {
+			break;
+		}
+	}
+	return (n == TINYMAC_MAX_NODES) ? NULL : node;
+}
+
+static tinymac_node_t* tinymac_get_free_node(void)
+{
+	tinymac_node_t *node = tinymac_ctx->nodes;
+	unsigned int n;
+
+	for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
+		if (node->state == tinymacState_Unregistered) {
+			break;
+		}
+	}
+	return (n == TINYMAC_MAX_NODES) ? NULL : node;
+}
 
 static int tinymac_tx_packet(uint8_t flags_type, uint8_t dest, uint8_t seq,
 		const char *buf, size_t size)
@@ -108,7 +156,6 @@ static int tinymac_tx_packet(uint8_t flags_type, uint8_t dest, uint8_t seq,
 	return phy_send(bufs, ARRAY_SIZE(bufs));
 }
 
-#if TINYMAC_COORDINATOR_SUPPORT
 static int tinymac_tx_beacon(boolean_t periodic)
 {
 	tinymac_beacon_t beacon;
@@ -124,132 +171,80 @@ static int tinymac_tx_beacon(boolean_t periodic)
 			TINYMAC_ADDR_BROADCAST, ++tinymac_ctx->bseq,
 			(const char*)&beacon, sizeof(beacon) /* + size of address list */);
 }
-#endif
 
-static void tinymac_rx_beacon(tinymac_header_t *hdr, size_t size)
-{
-	tinymac_beacon_t *beacon = (tinymac_beacon_t*)hdr->payload;
-
-	TRACE("BEACON from %016llX %s\n", beacon->uuid, (beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "(SYNC)" : "(ADV)");
-
-	if (beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) {
-		/* FIXME: Sync clock */
-	}
-
-	switch (tinymac_ctx->state) {
-	case tinymacState_Unregistered:
-		if (beacon->flags & TINYMAC_BEACON_FLAGS_PERMIT_ATTACH) {
-			tinymac_registration_request_t attach;
-
-			/* Temporarily bind with this network and send an attach request */
-			tinymac_ctx->net_id = hdr->net_id;
-
-			attach.uuid = tinymac_ctx->uuid;
-			attach.flags = 0; /* FIXME: Node flags */
-			tinymac_tx_packet((uint16_t)tinymacType_RegistrationRequest,
-					hdr->src_addr, ++tinymac_ctx->dseq,
-					(const char*)&attach, sizeof(attach));
-
-			tinymac_ctx->state = tinymacState_Registering;
-			tinymac_ctx->next_state = tinymacState_Unregistered;
-			tinymac_ctx->timer = get_timestamp() + TINYMAC_RETRY_INTERVAL;
-		}
-		break;
-	case tinymacState_Registered:
-		/* FIXME: Check if we are in the address list */
-		break;
-	default:
-		break;
-	}
-}
-
-static void tinymac_rx_registration_response(tinymac_header_t *hdr, size_t size)
-{
-	tinymac_registration_response_t *addr = (tinymac_registration_response_t*)hdr->payload;
-
-	TRACE("REG RESPONSE for %016llX %02X\n", addr->uuid, addr->addr);
-
-	/* Check and ignore if UUID doesn't match our own */
-	if (addr->uuid != tinymac_ctx->uuid) {
-		return;
-	}
-
-	if (addr->status != tinymacRegistrationStatus_Success) {
-		/* Coordinator rejected */
-		ERROR("registration error %d\n", addr->status);
-		tinymac_ctx->state = tinymacState_Unregistered;
-		return;
-	}
-
-	/* Update registration */
-	if (addr->addr == TINYMAC_ADDR_UNASSIGNED) {
-		/* Detachment */
-		tinymac_ctx->coord_addr = TINYMAC_ADDR_UNASSIGNED;
-		tinymac_ctx->net_id = TINYMAC_NETWORK_ANY;
-		tinymac_ctx->state = tinymacState_Unregistered;
-	} else if (tinymac_ctx->state == tinymacState_Registering) {
-		/* Attachment - only if we are expecting it */
-		tinymac_ctx->coord_addr = hdr->src_addr;
-		tinymac_ctx->net_id = hdr->net_id;
-		tinymac_ctx->state = tinymacState_Registered;
-	}
-	tinymac_ctx->addr = addr->addr;
-
-	/* Cancel timed state change */
-	tinymac_ctx->timer = 0;
-
-	INFO("New address %02X %02X\n", hdr->net_id, addr->addr);
-}
-
-#if TINYMAC_COORDINATOR_SUPPORT
 static void tinymac_rx_registration_request(tinymac_header_t *hdr, size_t size)
 {
 	tinymac_registration_request_t *attach = (tinymac_registration_request_t*)hdr->payload;
-	tinymac_registration_response_t addr;
-
-	if (!tinymac_ctx->coord) {
-		return;
-	}
+	tinymac_registration_response_t resp;
+	tinymac_node_t *node;
 
 	TRACE("REG REQUEST\n");
 
-	/* FIXME: Update coordinator's database */
+	/* Search for existing registration */
+	node = tinymac_get_node_by_uuid(attach->uuid);
+	if (!node) {
+		/* Try to allocated new slot */
+		node = tinymac_get_free_node();
+	}
 
-	/* Send address update */
-	addr.uuid = attach->uuid;
-	addr.addr = rand();
-	addr.status = tinymacRegistrationStatus_Success;
+	if (node) {
+		INFO("Registered node %02X for %016llX with flags %04X\n", node->addr, attach->uuid, attach->flags);
+		node->state = tinymacState_Registered;
+		node->uuid = attach->uuid;
+		node->last_heard = get_timestamp();
+
+		resp.uuid = attach->uuid;
+		resp.addr = node->addr;
+		resp.status = tinymacRegistrationStatus_Success;
+	} else {
+		ERROR("Network full\n");
+		resp.uuid = attach->uuid;
+		resp.addr = TINYMAC_ADDR_UNASSIGNED;
+		resp.status = tinymacRegistrationStatus_NetworkFull;
+	}
+
+	tinymac_dump_nodes();
+
+	/* Send response */
 	tinymac_tx_packet((uint16_t)tinymacType_RegistrationResponse,
 			hdr->src_addr, ++tinymac_ctx->dseq,
-			(const char*)&addr, sizeof(addr));
+			(const char*)&resp, sizeof(resp));
 }
 
 static void tinymac_rx_deregistration_request(tinymac_header_t *hdr, size_t size)
 {
-	tinymac_deregistration_request_t *attach = (tinymac_deregistration_request_t*)hdr->payload;
-	tinymac_registration_response_t addr;
-
-	if (!tinymac_ctx->coord) {
-		return;
-	}
+	tinymac_deregistration_request_t *detach = (tinymac_deregistration_request_t*)hdr->payload;
+	tinymac_registration_response_t resp;
+	tinymac_node_t *node;
 
 	TRACE("DEREG REQUEST\n");
 
-	/* FIXME: Update coordinator's database */
+	node = tinymac_get_node_by_addr(hdr->src_addr);
+	if (!node || node->uuid != detach->uuid) {
+		/* Ignore if source address not known or UUID doesn't match */
+		ERROR("Bad deregistration request from %016llX\n", detach->uuid);
+		return;
+	}
 
-	/* Send address update */
-	addr.uuid = attach->uuid;
-	addr.addr = TINYMAC_ADDR_UNASSIGNED;
-	addr.status = tinymacRegistrationStatus_Success;
+	/* Free the slot */
+	INFO("De-registered node %02X for %016llX reason %u\n", node->addr, node->uuid, detach->reason);
+	node->state = tinymacState_Unregistered;
+
+	tinymac_dump_nodes();
+
+	/* Send response */
+	resp.uuid = detach->uuid;
+	resp.addr = TINYMAC_ADDR_UNASSIGNED;
+	resp.status = tinymacRegistrationStatus_Success;
 	tinymac_tx_packet((uint16_t)tinymacType_RegistrationResponse,
 			hdr->src_addr, ++tinymac_ctx->dseq,
-			(const char*)&addr, sizeof(addr));
+			(const char*)&resp, sizeof(resp));
 }
-#endif
 
 static void tinymac_recv_cb(const char *buf, size_t size)
 {
 	tinymac_header_t *hdr = (tinymac_header_t*)buf;
+	tinymac_node_t *node;
 
 	if (size < sizeof(tinymac_header_t)) {
 		ERROR("Discarding short packet\n");
@@ -274,25 +269,27 @@ static void tinymac_recv_cb(const char *buf, size_t size)
 		return;
 	}
 
-	/* Data pending and Ack Request bits only checked on unicast packets */
-	if (hdr->net_id != TINYMAC_NETWORK_ANY && hdr->dest_addr != TINYMAC_ADDR_BROADCAST) {
+	/* For unicast packets we expect the source node to be registered */
+	if (hdr->net_id != TINYMAC_NETWORK_ANY && hdr->src_addr != TINYMAC_ADDR_UNASSIGNED &&
+			hdr->dest_addr != TINYMAC_ADDR_BROADCAST) {
+		/* Check registration - we must not ACK packets from unregistered nodes */
+		node = tinymac_get_node_by_addr(hdr->src_addr);
+		if (!node) {
+			ERROR("Source node is not registered\n");
+			return;
+		}
+		node->last_heard = get_timestamp();
+
+		/* Check for ack request */
 		if (hdr->flags & TINYMAC_FLAGS_ACK_REQUEST) {
 			tinymac_tx_packet((uint16_t)tinymacType_Ack,
 					hdr->src_addr, hdr->seq,
 					NULL, 0);
 		}
-		/* FIXME: Check data pending */
+		/* FIXME: Check data pending (not applicable for coordinator which is always-on rx anyway) */
 	}
 
 	switch (hdr->flags & TINYMAC_FLAGS_TYPE_MASK) {
-	case tinymacType_Beacon:
-		/* Beacon */
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_beacon_t)) {
-			ERROR("Discarding short packet\n");
-			return;
-		}
-		tinymac_rx_beacon(hdr, size);
-		break;
 	case tinymacType_Ack:
 		/* Acknowledgement */
 		TRACE("RX ACK\n");
@@ -309,14 +306,6 @@ static void tinymac_recv_cb(const char *buf, size_t size)
 		}
 #endif
 		break;
-	case tinymacType_RegistrationResponse:
-		/* Attach/detach response message */
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_registration_response_t)) {
-			ERROR("Discarding short packet\n");
-			return;
-		}
-		tinymac_rx_registration_response(hdr, size);
-		break;
 	case tinymacType_Ping:
 		/* This just solicits an ack, which happens above */
 		TRACE("PING\n");
@@ -329,13 +318,10 @@ static void tinymac_recv_cb(const char *buf, size_t size)
 		}
 		break;
 
-#if TINYMAC_COORDINATOR_SUPPORT
 	case tinymacType_BeaconRequest:
 		/* This solicits an extra beacon */
 		TRACE("BEACON REQUEST\n");
-		if (tinymac_ctx->coord) {
-			tinymac_tx_beacon(FALSE);
-		}
+		tinymac_tx_beacon(FALSE);
 		break;
 	case tinymacType_RegistrationRequest:
 		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_registration_request_t)) {
@@ -351,33 +337,28 @@ static void tinymac_recv_cb(const char *buf, size_t size)
 		}
 		tinymac_rx_deregistration_request(hdr, size);
 		break;
-#endif
 	default:
 		ERROR("Unsupported packet type\n");
 	}
 }
 
-int tinymac_init(uint64_t uuid, boolean_t coord)
+int tinymac_init(uint64_t uuid)
 {
+	unsigned int n;
+
 	tinymac_ctx->uuid = uuid;
 	tinymac_ctx->net_id = TINYMAC_NETWORK_ANY;
-	tinymac_ctx->coord_addr = TINYMAC_ADDR_UNASSIGNED;
 	tinymac_ctx->addr = TINYMAC_ADDR_UNASSIGNED;
 	tinymac_ctx->dseq = rand();
-	tinymac_ctx->timer = 0;
-	tinymac_ctx->state = tinymacState_BeaconRequest;
-	tinymac_ctx->next_state = tinymacState_Unregistered;
-
-#if TINYMAC_COORDINATOR_SUPPORT
 	tinymac_ctx->bseq = rand();
-	tinymac_ctx->coord = coord;
 	tinymac_ctx->permit_attach = FALSE;
-	if (coord) {
-		tinymac_ctx->net_id = rand();
-		tinymac_ctx->addr = 0;
-		tinymac_ctx->state = tinymacState_Registered;
+	tinymac_ctx->net_id = rand();
+	tinymac_ctx->addr = 0x00;
+
+	for (n = 0; n < TINYMAC_MAX_NODES; n++) {
+		tinymac_ctx->nodes[n].state = tinymacState_Unregistered;
+		tinymac_ctx->nodes[n].addr = n + 1;
 	}
-#endif
 
 	/* Register PHY receive callback */
 	phy_register_recv_cb(tinymac_recv_cb);
@@ -390,17 +371,20 @@ void tinymac_process(void)
 {
 	uint32_t now = get_timestamp();
 
+#if 0
 	/* Execute scheduled state changes */
 	if (tinymac_ctx->timer && (int32_t)(tinymac_ctx->timer - now) <= 0) {
 		TRACE("Timed state change => %s\n", tinymac_states[tinymac_ctx->next_state]);
 		tinymac_ctx->state = tinymac_ctx->next_state;
 		tinymac_ctx->timer = 0;
 	}
+#endif
 
 	/* Execute PHY function - this may call us back in the receive handler and cause
 	 * a state change */
 	phy_process();
 
+#if 0
 	/* MAC state machine */
 	switch (tinymac_ctx->state) {
 	case tinymacState_Unregistered:
@@ -420,6 +404,7 @@ void tinymac_process(void)
 		tinymac_ctx->state = tinymacState_Unregistered;
 		break;
 	}
+#endif
 }
 
 void tinymac_register_recv_cb(tinymac_recv_cb_t cb)
@@ -429,21 +414,33 @@ void tinymac_register_recv_cb(tinymac_recv_cb_t cb)
 
 void tinymac_permit_attach(boolean_t permit)
 {
-#if TINYMAC_COORDINATOR_SUPPORT
 	TRACE("permit_attach=%d\n", permit);
 
 	tinymac_ctx->permit_attach = permit;
-#endif
 }
 
 int tinymac_send(uint8_t dest, const char *buf, size_t size)
 {
-	if (tinymac_ctx->state != tinymacState_Registered) {
-		ERROR("Busy or not registered\n");
+	tinymac_node_t *node;
+
+	node = tinymac_get_node_by_addr(dest);
+	if (!node) {
+		ERROR("Node %02X not registered\n", dest);
+		return -1;
+	}
+	if (node->state != tinymacState_Registered) {
+		ERROR("Node %02X busy\n");
 		return -1;
 	}
 
-	return tinymac_tx_packet((uint16_t)tinymacType_Data,
-			dest, ++tinymac_ctx->dseq,
-			buf, size);
+	if (node->flags & TINYMAC_ATTACH_FLAGS_SLEEPY) {
+		/* FIXME: Defer tx and go to tinymacState_SendPending */
+		return -1;
+	} else {
+		/* Send now */
+		/* FIXME: What about ACK request? */
+		return tinymac_tx_packet((uint16_t)tinymacType_Data,
+				dest, ++tinymac_ctx->dseq,
+				buf, size);
+	}
 }

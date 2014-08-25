@@ -246,7 +246,7 @@ static void tinymac_recv_cb(const char *buf, size_t size)
 	}
 }
 
-int tinymac_init(uint64_t uuid, boolean_t coord)
+int tinymac_init(uint64_t uuid)
 {
 	tinymac_ctx->uuid = uuid;
 	tinymac_ctx->net_id = TINYMAC_NETWORK_ANY;

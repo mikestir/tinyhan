@@ -11,12 +11,6 @@
 #include <stdint.h>
 #include "common.h"
 
-/*!
- * Define to disable coordinator functionality (reduced code size), otherwise
- * this is configurable at run time.
- */
-#define TINYMAC_COORDINATOR_SUPPORT			1
-
 #define TINYMAC_ADDR_BROADCAST				0xFF
 #define TINYMAC_ADDR_UNASSIGNED				0xFF
 #define TINYMAC_NETWORK_ANY					0xFF
@@ -130,13 +124,12 @@ typedef enum {
 } tinymac_registration_status_t;
 
 typedef void (*tinymac_recv_cb_t)(uint8_t src, const char *payload, size_t size);
+typedef void (*tinymac_reg_cb_t)(uint64_t uuid, uint8_t addr);
 
-int tinymac_init(uint64_t uuid, boolean_t coord);
-
+int tinymac_init(uint64_t uuid);
+void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
 void tinymac_process(void);
 
-void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
-void tinymac_permit_attach(boolean_t permit);
 
 /*!
  * Send a data packet
@@ -147,5 +140,14 @@ void tinymac_permit_attach(boolean_t permit);
  * \return			Sequence number or -ve error code
  */
 int tinymac_send(uint8_t dest, const char *buf, size_t size);
+
+/********************/
+/* Coordinator only */
+/********************/
+
+void tinymac_permit_attach(boolean_t permit);
+
+void tinymac_register_reg_cb(tinymac_reg_cb_t cb);
+void tinymac_register_dereg_cb(tinymac_reg_cb_t cb);
 
 #endif /* MAC_H_ */
