@@ -17,6 +17,10 @@
 
 #define TINYMAC_RETRY_INTERVAL				5
 
+/*! Time (in seconds) after which we try to contact a node that we haven't heard from
+ * in a while */
+#define TINYMAC_LAST_HEARD_TIMEOUT			5
+
 typedef struct {
 	uint16_t		flags;
 	uint8_t			net_id;
@@ -73,7 +77,7 @@ typedef enum {
 
 typedef struct {
 	uint64_t		uuid;
-	uint32_t		timestamp;
+	uint16_t		timestamp;
 	uint8_t			flags;
 	uint8_t			beacon_interval;
 	uint8_t			address_list[0];
@@ -123,12 +127,36 @@ typedef enum {
 	tinymacRegistrationStatus_Admin,
 } tinymac_registration_status_t;
 
+typedef struct {
+	uint64_t		uuid;
+	uint8_t			flags;					/*< Node flags, e.g. SLEEPY */
+	uint8_t			beacon_interval;		/*< 250 ms * 2^n, or TINYMAC_BEACON_INTERVAL_NO_BEACON */
+	uint8_t			beacon_offset;
+} tinymac_params_t;
+
 typedef void (*tinymac_recv_cb_t)(uint8_t src, const char *payload, size_t size);
 typedef void (*tinymac_reg_cb_t)(uint64_t uuid, uint8_t addr);
 
-int tinymac_init(uint64_t uuid);
+int tinymac_init(const tinymac_params_t *params);
 void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
-void tinymac_process(void);
+
+/*!
+ * Called at least when new received data is available (i.e. PHY function
+ * has something to do).  Call once per interrupt in main loop when no OS
+ * is in use.
+ */
+void tinymac_recv_handler(void);
+
+/*!
+ * Called at 250 ms intervals for generation of beacon frames and
+ * execution of periodic state changes.  This may be called directly from
+ * interrupt context if no OS is in use.
+ *
+ * In a node implementation the timer used to generate these calls must be
+ * synced with incoming beacons such that the call occurs just prior to
+ * the expected beacon transmission.
+ */
+void tinymac_tick_handler(void *arg);
 
 
 /*!

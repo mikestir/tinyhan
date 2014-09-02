@@ -9,6 +9,7 @@
 
 #include <stdint.h>
 #include <stdlib.h>
+#include <string.h>
 
 #include "common.h"
 #include "phy.h"
@@ -41,7 +42,7 @@ static uint32_t get_timestamp(void)
 }
 
 typedef struct {
-	uint64_t			uuid;			/*< Assigned unit identifier */
+	tinymac_params_t	params;			/*< MAC configuration */
 	uint8_t				net_id;			/*< Current network ID (if registered) */
 	uint8_t				addr;			/*< Current device short address (if registered) */
 	uint8_t				dseq;			/*< Current data sequence number */
@@ -102,8 +103,8 @@ static void tinymac_rx_beacon(tinymac_header_t *hdr, size_t size)
 			/* Temporarily bind with this network and send an attach request */
 			tinymac_ctx->net_id = hdr->net_id;
 
-			attach.uuid = tinymac_ctx->uuid;
-			attach.flags = 0; /* FIXME: Node flags */
+			attach.uuid = tinymac_ctx->params.uuid;
+			attach.flags = tinymac_ctx->params.flags;
 			tinymac_tx_packet((uint16_t)tinymacType_RegistrationRequest,
 					hdr->src_addr, ++tinymac_ctx->dseq,
 					(const char*)&attach, sizeof(attach));
@@ -128,7 +129,7 @@ static void tinymac_rx_registration_response(tinymac_header_t *hdr, size_t size)
 	TRACE("REG RESPONSE for %016llX %02X\n", addr->uuid, addr->addr);
 
 	/* Check and ignore if UUID doesn't match our own */
-	if (addr->uuid != tinymac_ctx->uuid) {
+	if (addr->uuid != tinymac_ctx->params.uuid) {
 		return;
 	}
 
@@ -246,9 +247,10 @@ static void tinymac_recv_cb(const char *buf, size_t size)
 	}
 }
 
-int tinymac_init(uint64_t uuid)
+int tinymac_init(const tinymac_params_t *params)
 {
-	tinymac_ctx->uuid = uuid;
+	memcpy(&tinymac_ctx->params, params, sizeof(tinymac_params_t));
+
 	tinymac_ctx->net_id = TINYMAC_NETWORK_ANY;
 	tinymac_ctx->hub_addr = TINYMAC_ADDR_UNASSIGNED;
 	tinymac_ctx->addr = TINYMAC_ADDR_UNASSIGNED;
@@ -264,7 +266,14 @@ int tinymac_init(uint64_t uuid)
 	return 0;
 }
 
-void tinymac_process(void)
+void tinymac_recv_handler(void)
+{
+	/* Execute PHY function - this may call us back in the receive handler and cause
+	 * a state change */
+	phy_recv_handler();
+}
+
+void tinymac_tick_handler(void *arg)
 {
 	uint32_t now = get_timestamp();
 
@@ -274,10 +283,6 @@ void tinymac_process(void)
 		tinymac_ctx->state = tinymac_ctx->next_state;
 		tinymac_ctx->timer = 0;
 	}
-
-	/* Execute PHY function - this may call us back in the receive handler and cause
-	 * a state change */
-	phy_process();
 
 	/* MAC state machine */
 	switch (tinymac_ctx->state) {

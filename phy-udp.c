@@ -134,7 +134,7 @@ void phy_register_recv_cb(phy_recv_cb_t cb)
 	phy_recv_cb = cb;
 }
 
-void phy_process(void)
+void phy_recv_handler(void)
 {
 	char payload[MAX_PACKET];
 	uint16_t ourcrc = 0, *theircrc;

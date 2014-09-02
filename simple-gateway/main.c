@@ -7,18 +7,21 @@
 
 #include <stdlib.h>
 #include <signal.h>
-#include <poll.h>
 #include <string.h>
 #include <unistd.h>
 #include <sys/socket.h>
 #include <netinet/in.h>
 #include <arpa/inet.h>
 #include <time.h>
+#include <sys/timerfd.h>
+#include <sys/epoll.h>
 
 #include "common.h"
 #include "tinymac.h"
 #include "phy.h"
+#include "timer.h"
 
+#define MAX_EVENTS			16
 #define MAX_DEVICES 		256
 #define MAX_PAYLOAD			1024
 #define BROKER_ADDR			"127.0.0.1"
@@ -51,7 +54,13 @@ int main(void)
 	struct sigaction new_sa, old_sa;
 	unsigned int n;
 	struct sockaddr_in sa;
-	struct pollfd pfd[MAX_DEVICES + 1];
+	struct epoll_event ev, events[MAX_EVENTS];
+	int epoll_fd, timer_fd;
+	struct itimerspec its;
+	tinymac_params_t params = {
+			.beacon_interval = 4,
+			.beacon_offset = 0,
+	};
 
 	/* Trap break */
 	new_sa.sa_handler = break_handler;
@@ -59,15 +68,28 @@ int main(void)
 	new_sa.sa_flags = 0;
 	sigaction(SIGINT, &new_sa, &old_sa);
 
+	/* Initialise comms */
 	srand(time(NULL) + getpid());
 	phy_init();
-	tinymac_init(rand(), TRUE);
+	params.uuid = rand();
+	tinymac_init(&params);
 	tinymac_register_recv_cb(rx_handler);
 	tinymac_permit_attach(TRUE);
 
-	memset(pfd, 0, sizeof(pfd));
-	pfd[MAX_DEVICES].fd = phy_get_fd();
-	pfd[MAX_DEVICES].events = POLLIN;
+	/* Set up epoll */
+	epoll_fd = epoll_create(ARRAY_SIZE(events));
+	if (epoll_fd < 0) {
+		perror("epoll_create");
+		return 1;
+	}
+
+	/* watch tinymac PHY fd */
+	ev.events = EPOLLIN;
+	ev.data.u32 = MAX_DEVICES + 0;
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, phy_get_fd(), &ev) < 0) {
+		perror("epoll_ctl");
+		return 1;
+	}
 
 	/* Bind a UDP socket for each device we will be gating, for
 	 * replies from the broker */
@@ -88,45 +110,83 @@ int main(void)
 			return 1;
 		}
 
-		pfd[n].fd = socks[n];
-		pfd[n].events = POLLIN;
+		/* Watch for events */
+		ev.events = EPOLLIN;
+		ev.data.u32 = n;
+		if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, socks[n], &ev) < 0) {
+			perror("epoll_ctl");
+			return 1;
+		}
 	}
+
+	/* Create a timer fd for despatching timer callbacks */
+	timer_fd = timerfd_create(CLOCK_REALTIME, 0);
+	if (timer_fd < 0) {
+		perror("timerfd_create");
+		return 1;
+	}
+	its.it_interval.tv_sec = 0;
+	its.it_interval.tv_nsec = 10000000ul; /* 10 ms timer tick */
+	its.it_value = its.it_interval;
+	if (timerfd_settime(timer_fd, 0, &its, NULL) < 0) {
+		perror("timerfd_settime");
+		return 1;
+	}
+	ev.events = EPOLLIN;
+	ev.data.u32 = MAX_DEVICES + 1;
+	if (epoll_ctl(epoll_fd, EPOLL_CTL_ADD, timer_fd, &ev) < 0) {
+		perror("epoll_ctl");
+		return 1;
+	}
+
+	timer_request_callback(tinymac_tick_handler, NULL, TIMER_MILLIS(250), 0);
 
 	while (!quit) {
-		int rc;
+		int n, nfds;
 
-		/* Wait for activity with timeout for periodic actions */
-		rc = poll(pfd, ARRAY_SIZE(pfd), 1000);
-
-		/* Check for broker data */
-		if (rc) {
-			for (n = 0; n < MAX_DEVICES; n++) {
-				if (pfd[n].revents == POLLIN) {
-					char payload[MAX_PAYLOAD];
-					struct sockaddr_in rxsa;
-					socklen_t addrlen = sizeof(rxsa);
-					int size;
-
-					/* Relay to device */
-					memset(&sa, 0, sizeof(sa));
-					size = recvfrom(socks[n], payload, sizeof(payload), 0, (struct sockaddr*)&rxsa, &addrlen);
-					if (size < 0) {
-						perror("recvfrom");
-						return 1;
-					}
-					tinymac_send((uint8_t)n, payload, size);
-				}
-				pfd[n].revents = 0;
-			}
+		/* Wait for event */
+		nfds = epoll_wait(epoll_fd, events, ARRAY_SIZE(events), -1);
+		if (nfds < 0) {
+			perror("epoll_wait");
+			return 1;
 		}
 
-		/* Execute non-blocking tasks */
-		tinymac_process();
+		for (n = 0; n < nfds; n++) {
+			if (events[n].data.u32 < MAX_DEVICES) {
+				/* Incoming data from broker */
+				char payload[MAX_PAYLOAD];
+				struct sockaddr_in rxsa;
+				socklen_t addrlen = sizeof(rxsa);
+				int size;
+
+				/* Relay to device */
+				memset(&sa, 0, sizeof(sa));
+				size = recvfrom(socks[events[n].data.u32], payload, sizeof(payload), 0, (struct sockaddr*)&rxsa, &addrlen);
+				if (size < 0) {
+					perror("recvfrom");
+					return 1;
+				}
+				tinymac_send((uint8_t)events[n].data.u32, payload, size);
+			} else if (events[n].data.u32 == MAX_DEVICES + 0) {
+				/* tinymac */
+				tinymac_recv_handler();
+			} else if (events[n].data.u32 == MAX_DEVICES + 1) {
+				/* tick */
+				char dummy[8];
+				read(timer_fd, dummy, sizeof(dummy));
+
+				timer_despatch_callbacks();
+			}
+		}
 	}
 
+	/* Close sockets */
 	for (n = 0; n < MAX_DEVICES; n++) {
 		close(socks[n]);
 	}
+	/* Terminate ticker */
+	close(timer_fd);
+
 	sigaction(SIGINT, &old_sa, NULL);
 
 	return 0;
