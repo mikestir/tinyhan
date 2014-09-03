@@ -100,7 +100,7 @@ int main(int argc, char **argv)
 		pfd.events = POLLIN;
 		rc = poll(&pfd, 1, 1000);
 
-		phy_process();
+		phy_recv_handler();
 	}
 
 	return 0;

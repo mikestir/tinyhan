@@ -1,25 +1,44 @@
-TARGET = mqttsn_client
+TARGET=mqttsn_client
 
-OBJS = main.o
-OBJS += client.o
-OBJS += tinymac-node.o ../phy-udp.o ../timer-linux.o
+INC_DIRS=. ..
+SRC_DIRS=. ..
 
-DEBUG_FLAGS = -g
-CC = gcc
-CFLAGS = -Wall $(DEBUG_FLAGS) -DDEBUG=3 -I..
-LDFLAGS = $(DEBUG_FLAGS)
-LIBS = -lrt
+OBJECTS=main.o client.o
+OBJECTS+=tinymac-node.o phy-udp.o timer-linux.o
 
-all:	$(TARGET)
+DEBUG_FLAGS=-g -DDEBUG=3
 
-$(TARGET):	$(OBJS)
-	$(CC) $(LDFLAGS) -o $@ $(OBJS) $(LIBS)
-	
-%.o : %.c
-	$(CC) -c $(CFLAGS) $< -o $@
-	
+CFLAGS=-Wall -O2 $(DEBUG_FLAGS)
+CFLAGS+=-fdata-sections -ffunction-sections
+CFLAGS+=$(addprefix -I,$(INC_DIRS))
+
+LDFLAGS=-Wl,--gc-sections
+
+LIBS=-lrt
+
+OUTPUT_DIR:=build-$(TARGET)
+OBJS:=$(addprefix $(OUTPUT_DIR)/,$(OBJECTS))
+
+CC=gcc
+MKDIR=mkdir
+RM=rm
+
+# Search paths
+vpath %.c $(SRC_DIRS)
+
+all:	$(OUTPUT_DIR)/$(TARGET)
+
 clean:
-	rm -rf $(TARGET) $(OBJS)
+	$(RM) -rf $(OUTPUT_DIR)
 	
+$(OUTPUT_DIR):
+	$(MKDIR) -p $(OUTPUT_DIR)
+
+$(OUTPUT_DIR)/$(TARGET):	$(OUTPUT_DIR) $(OBJS)
+	$(CC) $(LDFLAGS) -o $(OUTPUT_DIR)/$(TARGET) $(OBJS) $(LIBS)
+	
+$(OUTPUT_DIR)/%.o : %.c
+	$(CC) -c $(CFLAGS) $< -o $@
+
 .PHONY:	clean
 

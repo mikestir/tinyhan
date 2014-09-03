@@ -1,10 +1,9 @@
-TARGET=simplegateway
+TARGET=sniffer
 
 INC_DIRS=. ..
 SRC_DIRS=. ..
 
-OBJECTS=main.o
-OBJECTS+=tinymac-hub.o phy-udp.o timer-linux.o
+OBJECTS=tinyhan-sniffer.o phy-udp.o
 
 DEBUG_FLAGS=-g -DDEBUG=3
 
