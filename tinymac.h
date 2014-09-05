@@ -129,6 +129,7 @@ typedef enum {
 
 typedef struct {
 	uint64_t		uuid;
+	boolean_t		coordinator;
 	uint8_t			flags;					/*< Node flags, e.g. SLEEPY */
 	uint8_t			beacon_interval;		/*< 250 ms * 2^n, or TINYMAC_BEACON_INTERVAL_NO_BEACON */
 	uint8_t			beacon_offset;

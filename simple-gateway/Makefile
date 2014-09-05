@@ -4,7 +4,7 @@ INC_DIRS=. ..
 SRC_DIRS=. ..
 
 OBJECTS=main.o
-OBJECTS+=tinymac-hub.o phy-udp.o timer-linux.o
+OBJECTS+=tinymac.o phy-udp.o timer-linux.o
 
 DEBUG_FLAGS=-g -DDEBUG=3
 

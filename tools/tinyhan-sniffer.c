@@ -80,6 +80,12 @@ void rx_func(const char *buf, size_t size)
 		}
 		log(BG_GREEN FG_RED "Address assignment %02X %02X to device %016llX", hdr, hdr->net_id, addr->addr, addr->uuid);
 	} break;
+	case tinymacType_Ping: {
+		log(BG_BLUE FG_WHITE "Ping request", hdr);
+	} break;
+	case tinymacType_Data: {
+		log("Data", hdr);
+	} break;
 	default:
 		log("", hdr);
 	}
