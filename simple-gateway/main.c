@@ -58,6 +58,7 @@ int main(void)
 	int epoll_fd, timer_fd;
 	struct itimerspec its;
 	tinymac_params_t params = {
+			.coordinator = TRUE,
 			.beacon_interval = 4,
 			.beacon_offset = 0,
 	};
