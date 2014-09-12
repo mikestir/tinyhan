@@ -10,6 +10,8 @@
 
 #include <stdio.h>
 
+#include "ansi.h"
+
 typedef unsigned int boolean_t;
 
 #ifndef TRUE
@@ -31,9 +33,9 @@ typedef unsigned int boolean_t;
 	fprintf(stderr, "\n");\
 }
 
-#define TRACE(a,...)	fprintf(stderr, a, ##__VA_ARGS__)
-#define INFO(a,...)		fprintf(stderr, a, ##__VA_ARGS__)
-#define ERROR(a,...)	fprintf(stderr, a, ##__VA_ARGS__)
+#define TRACE(a,...)	fprintf(stderr, ATTR_RESET FG_GREEN __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__)
+#define INFO(a,...)		fprintf(stderr, ATTR_RESET FG_YELLOW __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__)
+#define ERROR(a,...)	fprintf(stderr, ATTR_RESET FG_RED __FILE__ "(%d): " ATTR_RESET a, __LINE__, ##__VA_ARGS__)
 #define FUNCTION_TRACE	TRACE("%s\n", __FUNCTION__)
 #else
 #define DUMP(buf, size)

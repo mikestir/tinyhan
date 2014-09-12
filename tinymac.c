@@ -32,12 +32,20 @@ static const char *tinymac_states[] = {
 		"WaitAck",
 };
 
+/*! Maximum number of registered nodes supported by the coordinator */
 #define TINYMAC_MAX_NODES				32
+/*! Maximum payload length (limited further by the PHY MTU) */
 #define TINYMAC_MAX_PAYLOAD				128
+/*! Maximum number of retries when transmitting a packet with ack request set */
 #define TINYMAC_MAX_RETRIES				3
+/*! Time to wait for an acknowledgement response (ms) */
 #define TINYMAC_ACK_TIMEOUT				250
-#define TINYMAC_BEACON_REQUEST_TIMEOUT	5000
-#define TINYMAC_REGISTRATION_TIMEOUT	2000
+/*! Time for an unregistered node to wait between beacon request transmissions (seconds) */
+#define TINYMAC_BEACON_REQUEST_TIMEOUT	10
+/*! Time to wait for a registration request to be answered (ms) */
+#define TINYMAC_REGISTRATION_TIMEOUT	1000
+/*! Time after which we ping a node which hasn't been heard (s) */
+#define TINYMAC_PING_DELAY				5
 
 typedef struct {
 	tinymac_state_t		state;
@@ -203,6 +211,13 @@ static int tinymac_tx_packet(tinymac_node_t *dest, uint8_t flags_type, const cha
 		return -1;
 	}
 
+	/* Build header */
+	hdr.flags = TINYMAC_FLAGS_VERSION | flags_type;
+	hdr.net_id = tinymac_ctx->net_id;
+	hdr.src_addr = tinymac_ctx->addr;
+	hdr.dest_addr = dest ? dest->addr : TINYMAC_ADDR_BROADCAST;
+	hdr.seq = ++tinymac_ctx->dseq;
+
 	if (dest && dest != &tinymac_ctx->coord) {
 		/* Only one message may be in flight at a time to a given node */
 		if (dest->state != tinymacState_Registered) {
@@ -215,18 +230,14 @@ static int tinymac_tx_packet(tinymac_node_t *dest, uint8_t flags_type, const cha
 		if (dest->flags & TINYMAC_ATTACH_FLAGS_SLEEPY) {
 			TRACE("Pending transmission for node %02X\n", dest->addr);
 			memcpy(dest->pending, buf, size);
+			memcpy(&dest->pending_header, &hdr, sizeof(hdr));
 			dest->pending_size = size;
 			dest->state = tinymacState_SendPending;
 			return 0;
 		}
 	}
 
-	/* Build header and send now */
-	hdr.flags = TINYMAC_FLAGS_VERSION | flags_type;
-	hdr.net_id = tinymac_ctx->net_id;
-	hdr.src_addr = tinymac_ctx->addr;
-	hdr.dest_addr = dest ? dest->addr : TINYMAC_ADDR_BROADCAST;
-	hdr.seq = ++tinymac_ctx->dseq;
+	/* Send now */
 	if (dest && (flags_type & TINYMAC_FLAGS_ACK_REQUEST)) {
 		/* Start a timer and prepare for a retransmission if we don't get an ACK */
 		TRACE("Waiting for ack from node %02X\n", dest->addr);
@@ -246,6 +257,7 @@ static int tinymac_tx_ack(tinymac_node_t *node, uint8_t seq)
 	tinymac_header_t hdr;
 	phy_buf_t bufs[] = {
 			{ (char*)&hdr, sizeof(hdr) },
+			{ NULL, 0 },
 	};
 
 	/* Build header and send now */
@@ -255,7 +267,25 @@ static int tinymac_tx_ack(tinymac_node_t *node, uint8_t seq)
 	hdr.dest_addr = node->addr;
 	hdr.seq = seq;
 	TRACE("ACK: %04X %02X %02X %02X %02X\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq);
-	return phy_send(bufs, ARRAY_SIZE(bufs));
+	/* return */ phy_send(bufs, 1);
+
+	/* Send pending packet if any */
+	if (node->state == tinymacState_SendPending) {
+		node->state = tinymacState_Registered;
+
+		memcpy(&hdr, &node->pending_header, sizeof(hdr));
+		bufs[1].buf = node->pending;
+		bufs[1].size = node->pending_size;
+		if (hdr.flags & TINYMAC_FLAGS_ACK_REQUEST) {
+			/* Start a timer and prepare for a retransmission if we don't get an ACK */
+			TRACE("Waiting for ack from node %02X\n", node->addr);
+			node->retries = TINYMAC_MAX_RETRIES;
+			node->state = tinymacState_WaitAck;
+			node->timer = timer_request_callback(tinymac_ack_timer, node, TIMER_MILLIS(TINYMAC_ACK_TIMEOUT), TIMER_ONE_SHOT);
+		}
+		TRACE("PENDING OUT: %04X %02X %02X %02X %02X (%u)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, node->pending_size);
+		return phy_send(bufs, ARRAY_SIZE(bufs));
+	}
 }
 
 static int tinymac_tx_beacon(boolean_t periodic)
@@ -350,9 +380,18 @@ static void tinymac_rx_beacon(tinymac_header_t *hdr, size_t size)
 			tinymac_ctx->coord.timer = timer_request_callback(tinymac_timeout_timer, NULL, TIMER_MILLIS(TINYMAC_REGISTRATION_TIMEOUT), TIMER_ONE_SHOT);
 		}
 		break;
-	case tinymacState_Registered:
-		/* FIXME: Check if we are in the address list */
-		break;
+	case tinymacState_Registered: {
+		unsigned int n;
+
+		/* Check if we are in the address list */
+		for (n = 0; n < size - sizeof(tinymac_header_t) - sizeof(tinymac_beacon_t); n++) {
+			if (beacon->address_list[n] == tinymac_ctx->addr) {
+				INFO("Pinging coordinator for pending data\n");
+				tinymac_tx_packet(&tinymac_ctx->coord, TINYMAC_FLAGS_ACK_REQUEST | (uint16_t)tinymacType_Ping, NULL, 0);
+				break;
+			}
+		}
+	} break;
 	default:
 		break;
 	}
@@ -510,22 +549,27 @@ static void tinymac_recv_cb(const char *buf, size_t size)
 		return;
 	}
 
-	/* For unicast packets we expect the source node to be registered */
-	if (hdr->net_id != TINYMAC_NETWORK_ANY && hdr->src_addr != TINYMAC_ADDR_UNASSIGNED &&
-			hdr->dest_addr != TINYMAC_ADDR_BROADCAST) {
-		/* Check registration - we must not ACK packets from unregistered nodes */
+	if (hdr->net_id != TINYMAC_NETWORK_ANY && hdr->src_addr != TINYMAC_ADDR_UNASSIGNED) {
+		/* Check registration for packets whose source address is not UNASSIGNED
+		 * and timestamp the node as seen */
 		node = tinymac_get_node_by_addr(hdr->src_addr);
 		if (!node) {
-			ERROR("Source node is not registered\n");
+			/* This node is not known - ignore it and it should time out and re-register */
+			ERROR("Source node %02X is not registered\n", hdr->src_addr);
 			return;
 		}
+		INFO("Updated last_heard for node %02X\n", node->addr);
 		node->last_heard = timer_get_tick_count();
 
-		/* Check for ack request */
-		if (hdr->flags & TINYMAC_FLAGS_ACK_REQUEST) {
-			tinymac_tx_ack(node, hdr->seq);
+		/* Handle special operations (ack/data pending) for unicast packets */
+		if (hdr->dest_addr != TINYMAC_ADDR_BROADCAST) {
+			if (hdr->flags & TINYMAC_FLAGS_ACK_REQUEST) {
+				tinymac_tx_ack(node, hdr->seq);
+			}
+
+			/* FIXME: Check data pending and leave rx on for a while
+			 * (not applicable for coordinator which is always-on rx anyway) */
 		}
-		/* FIXME: Check data pending (not applicable for coordinator which is always-on rx anyway) */
 	}
 
 	switch (hdr->flags & TINYMAC_FLAGS_TYPE_MASK) {
@@ -659,8 +703,10 @@ void tinymac_tick_handler(void *arg)
 		node = tinymac_ctx->nodes;
 		for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
 			if (node->state == tinymacState_Registered &&
-					(int32_t)((node->last_heard + TIMER_SECONDS(TINYMAC_LAST_HEARD_TIMEOUT)) - now) <= 0) {
+					(int32_t)((node->last_heard + TIMER_SECONDS(TINYMAC_PING_DELAY)) - now) <= 0) {
 				/* Send a ping */
+				/* FIXME: This fails if there is a packet pending - there needs to be a timeout on
+				 * a pending packet and it needs to be less than the ping timeout */
 				INFO("Pinging node %02X\n", node->addr);
 				tinymac_tx_packet(node, TINYMAC_FLAGS_ACK_REQUEST | (uint16_t)tinymacType_Ping, NULL, 0);
 			}
@@ -673,12 +719,12 @@ void tinymac_tick_handler(void *arg)
 					NULL, 0);
 
 			/* Set a timer for beacon request timeout */
-			tinymac_ctx->coord.timer = timer_request_callback(tinymac_timeout_timer, NULL, TIMER_MILLIS(TINYMAC_BEACON_REQUEST_TIMEOUT), TIMER_ONE_SHOT);
+			tinymac_ctx->coord.timer = timer_request_callback(tinymac_timeout_timer, NULL, TIMER_SECONDS(TINYMAC_BEACON_REQUEST_TIMEOUT), TIMER_ONE_SHOT);
 		}
 
 		/* Search for lost coordinator */
 		if (tinymac_ctx->coord.state == tinymacState_Registered &&
-				(int32_t)((tinymac_ctx->coord.last_heard + TIMER_SECONDS(TINYMAC_LAST_HEARD_TIMEOUT)) - now) <= 0) {
+				(int32_t)((tinymac_ctx->coord.last_heard + TIMER_SECONDS(TINYMAC_PING_DELAY)) - now) <= 0) {
 			/* Send a ping */
 			INFO("Pinging node %02X\n", tinymac_ctx->coord.addr);
 			tinymac_tx_packet(&tinymac_ctx->coord, TINYMAC_FLAGS_ACK_REQUEST | (uint16_t)tinymacType_Ping, NULL, 0);

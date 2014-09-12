@@ -36,18 +36,31 @@ void rx_func(const char *buf, size_t size)
 	switch (hdr->flags & TINYMAC_FLAGS_TYPE_MASK) {
 	case tinymacType_Beacon: {
 		const tinymac_beacon_t *beacon = (const tinymac_beacon_t*)hdr->payload;
+		char pending[256];
+		char *ptr;
+		unsigned int n;
+
 		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_beacon_t)) {
 			log(BG_RED FG_WHITE "SHORT (Beacon)", hdr);
 			return;
 		}
+
+		/* Build address list */
+		ptr = pending;
+		ptr += sprintf(ptr, "{");
+		for (n = 0; n < size - sizeof(tinymac_header_t) - sizeof(tinymac_beacon_t); n++) {
+			ptr += sprintf(ptr, "%02X ", beacon->address_list[n]);
+		}
+		ptr += sprintf(ptr, "}");
+
 		if (beacon->flags & TINYMAC_BEACON_FLAGS_PERMIT_ATTACH) {
-			log(FG_GREEN "%s Beacon from %02X %016llX (Attach permitted)", hdr,
+			log(FG_GREEN "%s Beacon from %02X %016llX (Attach permitted): %s", hdr,
 					(beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "Sync" : "Advertisement",
-					hdr->net_id, beacon->uuid);
+					hdr->net_id, beacon->uuid, pending);
 		} else {
-			log(FG_YELLOW "%s Beacon from %02X %016llX", hdr,
+			log(FG_YELLOW "%s Beacon from %02X %016llX: %s", hdr,
 					(beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "Sync" : "Advertisement",
-					hdr->net_id, beacon->uuid);
+					hdr->net_id, beacon->uuid, pending);
 		}
 	} break;
 	case tinymacType_BeaconRequest: {

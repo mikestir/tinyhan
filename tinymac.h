@@ -15,12 +15,6 @@
 #define TINYMAC_ADDR_UNASSIGNED				0xFF
 #define TINYMAC_NETWORK_ANY					0xFF
 
-#define TINYMAC_RETRY_INTERVAL				5
-
-/*! Time (in seconds) after which we try to contact a node that we haven't heard from
- * in a while */
-#define TINYMAC_LAST_HEARD_TIMEOUT			5
-
 typedef struct {
 	uint16_t		flags;
 	uint8_t			net_id;
