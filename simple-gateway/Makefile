@@ -10,7 +10,7 @@ DEBUG_FLAGS=-g -DDEBUG=3
 
 CFLAGS=-Wall -O2 $(DEBUG_FLAGS)
 CFLAGS+=-fdata-sections -ffunction-sections
-CFLAGS+=$(addprefix -I,$(INC_DIRS))
+CFLAGS+=$(addprefix -I,$(INC_DIRS)) -DWITH_TINYMAC_COORDINATOR=1
 
 LDFLAGS=-Wl,--gc-sections
 

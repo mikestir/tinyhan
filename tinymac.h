@@ -121,6 +121,8 @@ typedef enum {
 	tinymacRegistrationStatus_Admin,
 } tinymac_registration_status_t;
 
+/* End of protocol definitions */
+
 typedef struct {
 	uint64_t		uuid;
 	boolean_t		coordinator;
