@@ -8,6 +8,7 @@
 #include <stdint.h>
 #include <stdlib.h>
 #include <string.h>
+#include <inttypes.h>
 
 #include "common.h"
 #include "phy.h"
@@ -115,7 +116,7 @@ static void tinymac_dump_nodes(void)
 	printf("******************************************************************\n");
 	for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
 		if (node->uuid) {
-			printf("|  %02X  | %016llX | %02X    | %15s | %10u |\n",
+			printf("|  %02X  | %016" PRIX64 " | %02X    | %15s | %10u |\n",
 				node->addr, node->uuid, node->flags, tinymac_node_states[node->state], node->last_heard);
 		}
 	}
@@ -186,7 +187,7 @@ static void tinymac_ack_timer(void *arg)
 		};
 
 		/* Re-send and schedule another timer */
-		TRACE("OUT (retry): %04X %02X %02X %02X %02X (%u)\n",
+		TRACE("OUT (retry): %04X %02X %02X %02X %02X (%zu)\n",
 				node->pending_header.flags,
 				node->pending_header.net_id,
 				node->pending_header.dest_addr,
@@ -273,7 +274,7 @@ static int tinymac_tx_packet(tinymac_node_t *dest, uint8_t flags_type, const cha
 		dest->state = tinymacNodeState_WaitAck;
 		dest->timer = timer_request_callback(tinymac_ack_timer, dest, TIMER_MILLIS(TINYMAC_ACK_TIMEOUT), TIMER_ONE_SHOT);
 	}
-	TRACE("OUT: %04X %02X %02X %02X %02X (%u)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, size);
+	TRACE("OUT: %04X %02X %02X %02X %02X (%zu)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, size);
 	return phy_send(bufs, ARRAY_SIZE(bufs));
 }
 
@@ -308,9 +309,10 @@ static int tinymac_tx_ack(tinymac_node_t *node, uint8_t seq)
 			node->state = tinymacNodeState_WaitAck;
 			node->timer = timer_request_callback(tinymac_ack_timer, node, TIMER_MILLIS(TINYMAC_ACK_TIMEOUT), TIMER_ONE_SHOT);
 		}
-		TRACE("PENDING OUT: %04X %02X %02X %02X %02X (%u)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, node->pending_size);
+		TRACE("PENDING OUT: %04X %02X %02X %02X %02X (%zu)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, node->pending_size);
 		return phy_send(bufs, ARRAY_SIZE(bufs));
 	}
+	return 0;
 }
 
 static int tinymac_tx_beacon(boolean_t periodic)
@@ -371,7 +373,7 @@ static void tinymac_rx_beacon(tinymac_header_t *hdr, size_t size)
 		return;
 	}
 
-	TRACE("BEACON from %016llX %s\n", beacon->uuid, (beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "(SYNC)" : "(ADV)");
+	TRACE("BEACON from %016" PRIX64 " %s\n", beacon->uuid, (beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "(SYNC)" : "(ADV)");
 
 	/* Cancel beacon request timer */
 	if (tinymac_ctx->state == tinymacClientState_BeaconRequest) {
@@ -436,7 +438,7 @@ static void tinymac_rx_registration_response(tinymac_header_t *hdr, size_t size)
 		return;
 	}
 
-	TRACE("REG RESPONSE for %016llX %02X\n", addr->uuid, addr->addr);
+	TRACE("REG RESPONSE for %016" PRIX64 " %02X\n", addr->uuid, addr->addr);
 
 	/* Check and ignore if UUID doesn't match our own */
 	if (addr->uuid != tinymac_ctx->params.uuid) {
@@ -493,7 +495,7 @@ static void tinymac_rx_registration_request(tinymac_header_t *hdr, size_t size)
 	}
 
 	if (node) {
-		INFO("Registered node %02X for %016llX with flags %04X\n", node->addr, attach->uuid, attach->flags);
+		INFO("Registered node %02X for %016" PRIX64 " with flags %04X\n", node->addr, attach->uuid, attach->flags);
 		node->state = tinymacNodeState_Registered;
 		node->uuid = attach->uuid;
 		node->flags = attach->flags;
@@ -532,12 +534,12 @@ static void tinymac_rx_deregistration_request(tinymac_header_t *hdr, size_t size
 	node = tinymac_get_node_by_addr(hdr->src_addr);
 	if (!node || node->uuid != detach->uuid) {
 		/* Ignore if source address not known or UUID doesn't match */
-		ERROR("Bad deregistration request from %016llX\n", detach->uuid);
+		ERROR("Bad deregistration request from %016" PRIX64 "\n", detach->uuid);
 		return;
 	}
 
 	/* Free the slot */
-	INFO("De-registered node %02X for %016llX reason %u\n", hdr->src_addr, node->uuid, detach->reason);
+	INFO("De-registered node %02X for %016" PRIX64 " reason %u\n", hdr->src_addr, node->uuid, detach->reason);
 	node->state = tinymacNodeState_Unregistered;
 
 	tinymac_dump_nodes();
@@ -565,7 +567,7 @@ static void tinymac_recv_cb(const char *buf, size_t size)
 		return;
 	}
 
-	TRACE("IN: %04X %02X %02X %02X %02X (%u)\n", hdr->flags, hdr->net_id, hdr->dest_addr, hdr->src_addr, hdr->seq, size - sizeof(tinymac_header_t));
+	TRACE("IN: %04X %02X %02X %02X %02X (%zu)\n", hdr->flags, hdr->net_id, hdr->dest_addr, hdr->src_addr, hdr->seq, size - sizeof(tinymac_header_t));
 
 	if (tinymac_ctx->net_id != TINYMAC_NETWORK_ANY &&
 			hdr->net_id != tinymac_ctx->net_id && hdr->net_id != TINYMAC_NETWORK_ANY) {
