@@ -59,7 +59,7 @@ int main(void)
 	struct itimerspec its;
 	tinymac_params_t params = {
 			.coordinator = TRUE,
-			.beacon_interval = 4,
+			.beacon_interval = 3,
 			.beacon_offset = 0,
 	};
 
