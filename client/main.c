@@ -59,7 +59,7 @@ int main(void)
 	int epoll_fd, timer_fd;
 	struct itimerspec its;
 	tinymac_params_t params = {
-			.flags = TINYMAC_ATTACH_FLAGS_SLEEPY,
+//			.flags = TINYMAC_ATTACH_FLAGS_SLEEPY,
 	};
 
 	new_sa.sa_handler = break_handler;

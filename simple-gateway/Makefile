@@ -1,10 +1,10 @@
 TARGET=simplegateway
+PHY=udp
 
 INC_DIRS=. ..
 SRC_DIRS=. ..
 
-OBJECTS=main.o
-OBJECTS+=tinymac.o phy-udp.o timer-linux.o
+OBJECTS=main.o timer.o
 
 DEBUG_FLAGS=-g -DDEBUG=3
 
@@ -15,6 +15,8 @@ CFLAGS+=$(addprefix -I,$(INC_DIRS)) -DWITH_TINYMAC_COORDINATOR=1
 LDFLAGS=-Wl,--gc-sections
 
 LIBS=-lrt
+
+include tinyhan/tinyhan.mk
 
 OUTPUT_DIR:=build-$(TARGET)
 OBJS:=$(addprefix $(OUTPUT_DIR)/,$(OBJECTS))

@@ -174,12 +174,12 @@ void phy_recv_handler(void)
 		}
 
 		if (phy_recv_cb && phy_listening) {
-			phy_recv_cb(payload, (size_t)size - 2);
+			phy_recv_cb(payload, (size_t)size - 2, PHY_RSSI_NONE);
 		}
 	}
 }
 
-int phy_send(const phy_buf_t *bufs, unsigned int nbufs)
+int phy_send(phy_buf_t *bufs, unsigned int nbufs, uint8_t flags)
 {
 	struct sockaddr_in sa;
 	uint16_t crc;
@@ -203,6 +203,16 @@ int phy_send(const phy_buf_t *bufs, unsigned int nbufs)
 		sendto(phy_sock, bufs[n].buf, bufs[n].size, MSG_MORE, (struct sockaddr*)&sa, sizeof(sa));
 	}
 	sendto(phy_sock, &crc, sizeof(crc), 0, (struct sockaddr*)&sa, sizeof(sa));
+	return 0;
+}
+
+int phy_set_power(int dbm)
+{
+	return 0;
+}
+
+int phy_set_channel(unsigned int n)
+{
 	return 0;
 }
 

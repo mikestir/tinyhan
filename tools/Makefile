@@ -1,7 +1,7 @@
 TARGET=sniffer
 
-INC_DIRS=. ..
-SRC_DIRS=. ..
+INC_DIRS=. .. ../lib
+SRC_DIRS=. .. ../lib
 
 OBJECTS=tinyhan-sniffer.o phy-udp.o
 

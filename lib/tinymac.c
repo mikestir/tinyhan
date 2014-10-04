@@ -246,7 +246,7 @@ static void tinymac_ack_timeout(void *arg)
 				node->pending_header.seq,
 				node->pending_size);
 		node->timer = timer_request_callback(tinymac_ack_timeout, node, TIMER_MILLIS(TINYMAC_ACK_TIMEOUT), TIMER_ONE_SHOT);
-		phy_send(bufs, ARRAY_SIZE(bufs));
+		phy_send(bufs, ARRAY_SIZE(bufs), 0);
 	} else {
 		/* Give up */
 		tinymac_node_lost(node);
@@ -317,7 +317,7 @@ static int tinymac_tx_packet(tinymac_node_t *dest, uint8_t flags_type, const cha
 
 	/* Send now */
 	TRACE("OUT: %04X %02X %02X %02X %02X (%zu)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, size);
-	return phy_send(bufs, ARRAY_SIZE(bufs));
+	return phy_send(bufs, ARRAY_SIZE(bufs), 0);
 }
 
 static int tinymac_tx_ack(tinymac_node_t *node, uint8_t seq)
@@ -338,7 +338,7 @@ static int tinymac_tx_ack(tinymac_node_t *node, uint8_t seq)
 		hdr.flags |= TINYMAC_FLAGS_DATA_PENDING;
 	}
 	TRACE("ACK: %04X %02X %02X %02X %02X\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq);
-	/* return */ phy_send(bufs, 1);
+	/* return */ phy_send(bufs, 1, 0);
 
 	/* Send pending packet if any */
 	if (node->state == tinymacNodeState_SendPending) {
@@ -356,7 +356,7 @@ static int tinymac_tx_ack(tinymac_node_t *node, uint8_t seq)
 			node->timer = timer_request_callback(tinymac_ack_timeout, node, TIMER_MILLIS(TINYMAC_ACK_TIMEOUT), TIMER_ONE_SHOT);
 		}
 		TRACE("PENDING OUT: %04X %02X %02X %02X %02X (%zu)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, node->pending_size);
-		return phy_send(bufs, ARRAY_SIZE(bufs));
+		return phy_send(bufs, ARRAY_SIZE(bufs), 0);
 	}
 	return 0;
 }
@@ -408,7 +408,7 @@ static int tinymac_tx_beacon(boolean_t periodic)
 	hdr.dest_addr = TINYMAC_ADDR_BROADCAST;
 	hdr.seq = ++tinymac_ctx->bseq;
 	TRACE("BEACON: %04X %02X %02X %02X %02X\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq);
-	return phy_send(bufs, ARRAY_SIZE(bufs));
+	return phy_send(bufs, ARRAY_SIZE(bufs), periodic ? PHY_FLAG_IMMEDIATE : 0);
 }
 #endif
 
@@ -421,7 +421,12 @@ static void tinymac_rx_beacon(tinymac_header_t *hdr, size_t size)
 		return;
 	}
 
+#ifdef PRIX64
 	TRACE("BEACON from %016" PRIX64 " %s\n", beacon->uuid, (beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "(SYNC)" : "(ADV)");
+#else
+	/* For platforms that don't support printing uint64s we just show the lower 32-bit word */
+	TRACE("BEACON from %08" PRIX32 " %s\n", beacon->uuid, (beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) ? "(SYNC)" : "(ADV)");
+#endif
 
 	/* Cancel beacon request timer */
 	if (tinymac_ctx->state == tinymacClientState_BeaconRequest) {
@@ -486,7 +491,12 @@ static void tinymac_rx_registration_response(tinymac_header_t *hdr, size_t size)
 		return;
 	}
 
+#ifdef PRIX64
 	TRACE("REG RESPONSE for %016" PRIX64 " %02X\n", addr->uuid, addr->addr);
+#else
+	/* For platforms that don't support printing uint64s we just show the lower 32-bit word */
+	TRACE("REG RESPONSE for %08" PRIX32 " %02X\n", addr->uuid, addr->addr);
+#endif
 
 	/* Check and ignore if UUID doesn't match our own */
 	if (addr->uuid != tinymac_ctx->params.uuid) {
@@ -602,7 +612,7 @@ static void tinymac_rx_deregistration_request(tinymac_header_t *hdr, size_t size
 }
 #endif
 
-static void tinymac_recv_cb(const char *buf, size_t size)
+static void tinymac_recv_cb(const char *buf, size_t size, int rssi)
 {
 	tinymac_header_t *hdr = (tinymac_header_t*)buf;
 	tinymac_node_t *node = NULL;
