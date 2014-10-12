@@ -127,7 +127,7 @@ int main(void)
 		for (n = 0; n < nfds; n++) {
 			if (events[n].data.u32 == 0) {
 				/* tinymac */
-				tinymac_recv_handler();
+				tinymac_event_handler();
 			} else if (events[n].data.u32 == 1) {
 				/* tick */
 				char dummy[8];

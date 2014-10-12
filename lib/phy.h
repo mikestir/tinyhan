@@ -64,10 +64,14 @@ int phy_standby(void);
 void phy_register_recv_cb(phy_recv_cb_t cb);
 
 /*!
- * Handler function to be called when the PHY has signalled that data
- * is available.  This should normally not be called from an ISR.
+ * Non-blocking handler function to be called at least when the PHY
+ * has raised an interrupt.  If calling from an OS then it is
+ * up to the implementation to handle waiting for an event, e.g. by
+ * raising an event from the ISR.  It should not be called directly
+ * from an ISR.
+ * \see phy_poll
  */
-void phy_recv_handler(void);
+void phy_event_handler(void);
 
 /*!
  * Sends a packet with collision avoidance (clear channel assessment),
@@ -100,7 +104,7 @@ int phy_set_channel(unsigned int n);
  */
 unsigned int phy_get_mtu(void);
 
-/*! For polling if running on an OS */
+/*! For polling if running on an OS (for Linux port) */
 int phy_get_fd(void);
 
 #endif

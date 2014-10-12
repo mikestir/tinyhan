@@ -134,7 +134,7 @@ void phy_register_recv_cb(phy_recv_cb_t cb)
 	phy_recv_cb = cb;
 }
 
-void phy_recv_handler(void)
+void phy_event_handler(void)
 {
 	char payload[MAX_PACKET];
 	uint16_t ourcrc = 0, *theircrc;
@@ -143,7 +143,7 @@ void phy_recv_handler(void)
 	socklen_t addrlen = sizeof(sa);
 	int rc;
 
-	/* phy_task should be non-blocking, so poll with immediate timeout */
+	/* phy_event_handler is non-blocking, so poll with immediate timeout */
 	memset(&pfd, 0, sizeof(pfd));
 	pfd.fd = phy_sock;
 	pfd.events = POLLIN;

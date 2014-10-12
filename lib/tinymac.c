@@ -12,7 +12,6 @@
 
 #include "common.h"
 #include "phy.h"
-#include "timer.h"
 #include "tinymac.h"
 
 typedef enum {
@@ -55,11 +54,23 @@ static const char *tinymac_node_states[] = {
 /*! Time after which we ping a node which hasn't been heard (s) */
 #define TINYMAC_PING_DELAY				10
 
+#define TINYMAC_MILLIS(ms)				((ms) / TINYMAC_TICK_MS)
+#define TINYMAC_SECONDS(s)				((s) * 1000 / TINYMAC_TICK_MS)
+
+
+typedef void (*tinymac_timer_cb_t)(void *arg);
+
+typedef struct {
+	tinymac_timer_cb_t		callback;
+	void					*arg;
+	uint32_t				expiry;
+} tinymac_timer_t;
+
 typedef struct {
 	tinymac_node_state_t	state;
 	uint8_t					addr;			/*< Assigned short address */
 	uint64_t				uuid;			/*< Unit identifier */
-	timer_handle_t			timer;			/*< Timer for ack timeout, etc. */
+	tinymac_timer_t			timer;			/*< Timer for ack timeout, etc. */
 	uint32_t				last_heard;		/*< Last heard time (ticks) */
 	uint16_t				flags;			/*< Node flags (from registration) */
 	uint8_t					retries;		/*< Number of tx tries remaining */
@@ -77,6 +88,7 @@ typedef struct {
 	tinymac_params_t		params;			/*< MAC configuration */
 	unsigned int			phy_mtu;		/*< MTU from PHY driver */
 	tinymac_recv_cb_t		rx_cb;			/*< MAC data receive callback */
+	uint32_t				tick_count;		/*< Tick counter */
 
 	/* net_id and addr are assigned by the coordinator upon registration, or by
 	 * software if this node is the coordinator */
@@ -91,7 +103,7 @@ typedef struct {
 
 	tinymac_client_state_t	state;			/*< Current client state for this node */
 	tinymac_node_t			coord;			/*< Client: Associated coordinator */
-	timer_handle_t			timer;			/*< Timer for registration/beacon requests */
+	tinymac_timer_t			timer;			/*< Timer for registration/beacon requests */
 
 #if WITH_TINYMAC_COORDINATOR
 	/***************/
@@ -107,8 +119,30 @@ typedef struct {
 static tinymac_t tinymac_ctx_;
 static tinymac_t *tinymac_ctx = &tinymac_ctx_;
 
+/* Timed callback functions */
+
+static inline void tinymac_set_callback(tinymac_timer_t *timer, tinymac_timer_cb_t cb, void *arg, uint32_t delay)
+{
+	timer->callback = cb;
+	timer->arg = arg;
+	timer->expiry = tinymac_ctx->tick_count + delay;
+}
+
+static inline void tinymac_cancel_callback(tinymac_timer_t *timer)
+{
+	timer->callback = NULL;
+}
+
+static inline void tinymac_despatch_callback(tinymac_timer_t *timer)
+{
+	if (timer->callback && ((int32_t)(tinymac_ctx->tick_count - timer->expiry) >= 0)) {
+		timer->callback(timer->arg);
+		timer->callback = NULL;
+	}
+}
+
 #if WITH_TINYMAC_COORDINATOR
-static void tinymac_dump_nodes(void)
+void tinymac_dump_nodes(void)
 {
 	tinymac_node_t *node = tinymac_ctx->nodes;
 	unsigned int n;
@@ -245,7 +279,7 @@ static void tinymac_ack_timeout(void *arg)
 				node->pending_header.src_addr,
 				node->pending_header.seq,
 				node->pending_size);
-		node->timer = timer_request_callback(tinymac_ack_timeout, node, TIMER_MILLIS(TINYMAC_ACK_TIMEOUT), TIMER_ONE_SHOT);
+		tinymac_set_callback(&node->timer, tinymac_ack_timeout, node, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
 		phy_send(bufs, ARRAY_SIZE(bufs), 0);
 	} else {
 		/* Give up */
@@ -296,7 +330,7 @@ static int tinymac_tx_packet(tinymac_node_t *dest, uint8_t flags_type, const cha
 
 			/* Start a timer for send timeout - the recipient must call in and ask for
 			 * pending packets before this expires */
-			dest->timer = timer_request_callback(tinymac_send_timeout, dest, TIMER_SECONDS(TINYMAC_SEND_TIMEOUT), TIMER_ONE_SHOT);
+			tinymac_set_callback(&dest->timer, tinymac_send_timeout, dest, TINYMAC_SECONDS(TINYMAC_SEND_TIMEOUT));
 			return 0;
 		}
 	}
@@ -312,7 +346,7 @@ static int tinymac_tx_packet(tinymac_node_t *dest, uint8_t flags_type, const cha
 
 		/* Start a timer for ack receipt and reset retry counter */
 		dest->retries = TINYMAC_MAX_RETRIES;
-		dest->timer = timer_request_callback(tinymac_ack_timeout, dest, TIMER_MILLIS(TINYMAC_ACK_TIMEOUT), TIMER_ONE_SHOT);
+		tinymac_set_callback(&dest->timer, tinymac_ack_timeout, dest, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
 	}
 
 	/* Send now */
@@ -342,7 +376,7 @@ static int tinymac_tx_ack(tinymac_node_t *node, uint8_t seq)
 
 	/* Send pending packet if any */
 	if (node->state == tinymacNodeState_SendPending) {
-		timer_cancel_callback(node->timer);
+		tinymac_cancel_callback(&node->timer);
 		node->state = tinymacNodeState_Registered;
 
 		memcpy(&hdr, &node->pending_header, sizeof(hdr));
@@ -353,7 +387,7 @@ static int tinymac_tx_ack(tinymac_node_t *node, uint8_t seq)
 			TRACE("Waiting for ack from node %02X\n", node->addr);
 			node->retries = TINYMAC_MAX_RETRIES;
 			node->state = tinymacNodeState_WaitAck;
-			node->timer = timer_request_callback(tinymac_ack_timeout, node, TIMER_MILLIS(TINYMAC_ACK_TIMEOUT), TIMER_ONE_SHOT);
+			tinymac_set_callback(&node->timer, tinymac_ack_timeout, node, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
 		}
 		TRACE("PENDING OUT: %04X %02X %02X %02X %02X (%zu)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, node->pending_size);
 		return phy_send(bufs, ARRAY_SIZE(bufs), 0);
@@ -431,7 +465,7 @@ static void tinymac_rx_beacon(tinymac_header_t *hdr, size_t size)
 	/* Cancel beacon request timer */
 	if (tinymac_ctx->state == tinymacClientState_BeaconRequest) {
 		TRACE("Canceling beacon request timer\n");
-		timer_cancel_callback(tinymac_ctx->timer);
+		tinymac_cancel_callback(&tinymac_ctx->timer);
 	}
 
 	if (beacon->flags & TINYMAC_BEACON_FLAGS_SYNC) {
@@ -456,13 +490,13 @@ static void tinymac_rx_beacon(tinymac_header_t *hdr, size_t size)
 			tinymac_ctx->coord.addr = hdr->src_addr;
 			tinymac_ctx->coord.uuid = beacon->uuid;
 			tinymac_ctx->coord.flags = 0;
-			tinymac_ctx->coord.last_heard = timer_get_tick_count();
+			tinymac_ctx->coord.last_heard = tinymac_ctx->tick_count;
 
 			tinymac_tx_packet(&tinymac_ctx->coord, (uint16_t)tinymacType_RegistrationRequest,
 					(const char*)&attach, sizeof(attach));
 
 			/* Start callback timer */
-			tinymac_ctx->timer = timer_request_callback(tinymac_timeout_timer, NULL, TIMER_MILLIS(TINYMAC_REGISTRATION_TIMEOUT), TIMER_ONE_SHOT);
+			tinymac_set_callback(&tinymac_ctx->timer, tinymac_timeout_timer, NULL, TINYMAC_MILLIS(TINYMAC_REGISTRATION_TIMEOUT));
 		}
 		break;
 	case tinymacClientState_Registered: {
@@ -506,7 +540,7 @@ static void tinymac_rx_registration_response(tinymac_header_t *hdr, size_t size)
 	/* Cancel registration timer */
 	if (tinymac_ctx->state == tinymacClientState_Registering) {
 		TRACE("Canceling registration timer\n");
-		timer_cancel_callback(tinymac_ctx->timer);
+		tinymac_cancel_callback(&tinymac_ctx->timer);
 	}
 
 	if (addr->status != tinymacRegistrationStatus_Success) {
@@ -558,7 +592,7 @@ static void tinymac_rx_registration_request(tinymac_header_t *hdr, size_t size)
 		node->state = tinymacNodeState_Registered;
 		node->uuid = attach->uuid;
 		node->flags = attach->flags;
-		node->last_heard = timer_get_tick_count();
+		node->last_heard = tinymac_ctx->tick_count;
 
 		resp.uuid = attach->uuid;
 		resp.addr = node->addr;
@@ -647,7 +681,7 @@ static void tinymac_recv_cb(const char *buf, size_t size, int rssi)
 		node = tinymac_get_node_by_addr(hdr->src_addr);
 		if (node) {
 			INFO("Updated last_heard for node %02X\n", hdr->src_addr);
-			node->last_heard = timer_get_tick_count();
+			node->last_heard = tinymac_ctx->tick_count;
 		}
 
 		/* Handle special operations (ack/data pending) for unicast packets */
@@ -679,7 +713,7 @@ static void tinymac_recv_cb(const char *buf, size_t size, int rssi)
 				/* Ack ok, cancel timer */
 				TRACE("Valid ack received from %02X for %02X\n", hdr->src_addr, hdr->seq);
 				node->state = tinymacNodeState_Registered;
-				timer_cancel_callback(node->timer);
+				tinymac_cancel_callback(&node->timer);
 			} else {
 				ERROR("Bad ack received from %02X\n", hdr->src_addr);
 			}
@@ -780,18 +814,11 @@ void tinymac_register_recv_cb(tinymac_recv_cb_t cb)
 	tinymac_ctx->rx_cb = cb;
 }
 
-void tinymac_recv_handler(void)
-{
-	/* Execute PHY function - this may call us back in the receive handler and cause
-	 * a state change */
-	phy_recv_handler();
-}
-
 void tinymac_tick_handler(void *arg)
 {
 	unsigned int n;
 	tinymac_node_t *node;
-	uint32_t now = timer_get_tick_count();
+	uint32_t now = tinymac_ctx->tick_count;
 
 #if WITH_TINYMAC_COORDINATOR
 	if (tinymac_ctx->params.coordinator) {
@@ -807,11 +834,14 @@ void tinymac_tick_handler(void *arg)
 		node = tinymac_ctx->nodes;
 		for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
 			if (node->state == tinymacNodeState_Registered &&
-					(int32_t)((node->last_heard + TIMER_SECONDS(TINYMAC_PING_DELAY)) - now) <= 0) {
+					(int32_t)((node->last_heard + TINYMAC_SECONDS(TINYMAC_PING_DELAY)) - now) <= 0) {
 				/* Send a ping */
 				INFO("Pinging node %02X\n", node->addr);
 				tinymac_tx_packet(node, TINYMAC_FLAGS_ACK_REQUEST | (uint16_t)tinymacType_Ping, NULL, 0);
 			}
+
+			/* Despatch deferred operations */
+			tinymac_despatch_callback(&node->timer);
 		}
 	} else
 #endif
@@ -822,18 +852,22 @@ void tinymac_tick_handler(void *arg)
 			tinymac_tx_packet(NULL, (uint16_t)tinymacType_BeaconRequest, NULL, 0);
 
 			/* Set a timer for beacon request timeout */
-			tinymac_ctx->timer = timer_request_callback(tinymac_timeout_timer, NULL, TIMER_SECONDS(TINYMAC_BEACON_REQUEST_TIMEOUT), TIMER_ONE_SHOT);
+			tinymac_set_callback(&tinymac_ctx->timer, tinymac_timeout_timer, NULL, TINYMAC_SECONDS(TINYMAC_BEACON_REQUEST_TIMEOUT));
 		}
 
 		/* Search for lost coordinator */
 		if (tinymac_ctx->coord.state == tinymacNodeState_Registered &&
-				(int32_t)((tinymac_ctx->coord.last_heard + TIMER_SECONDS(TINYMAC_PING_DELAY)) - now) <= 0) {
+				(int32_t)((tinymac_ctx->coord.last_heard + TINYMAC_SECONDS(TINYMAC_PING_DELAY)) - now) <= 0) {
 			/* Send a ping */
 			INFO("Pinging coordinator\n");
 			tinymac_tx_packet(&tinymac_ctx->coord, TINYMAC_FLAGS_ACK_REQUEST | (uint16_t)tinymacType_Ping, NULL, 0);
 		}
+
+		/* Despatch deferred operations */
+		tinymac_despatch_callback(&tinymac_ctx->timer);
 	}
 
+	tinymac_ctx->tick_count++;
 }
 
 #if WITH_TINYMAC_COORDINATOR

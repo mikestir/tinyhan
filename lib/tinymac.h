@@ -15,6 +15,9 @@
 #define TINYMAC_ADDR_UNASSIGNED				0xFF
 #define TINYMAC_NETWORK_ANY					0xFF
 
+/*! Tick interval in ms */
+#define TINYMAC_TICK_MS						250
+
 typedef struct {
 	uint16_t		flags;
 	uint8_t			net_id;
@@ -138,13 +141,6 @@ int tinymac_init(const tinymac_params_t *params);
 void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
 
 /*!
- * Called at least when new received data is available (i.e. PHY function
- * has something to do).  Call once per interrupt in main loop when no OS
- * is in use.
- */
-void tinymac_recv_handler(void);
-
-/*!
  * Called at 250 ms intervals for generation of beacon frames and
  * execution of periodic state changes.  This may be called directly from
  * interrupt context if no OS is in use.
@@ -174,5 +170,6 @@ void tinymac_permit_attach(boolean_t permit);
 
 void tinymac_register_reg_cb(tinymac_reg_cb_t cb);
 void tinymac_register_dereg_cb(tinymac_reg_cb_t cb);
+void tinymac_dump_nodes(void);
 
 #endif /* MAC_H_ */
