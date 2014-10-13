@@ -4,7 +4,7 @@ PHY=udp
 INC_DIRS=. ..
 SRC_DIRS=. ..
 
-OBJECTS=main.o timer.o
+OBJECTS=main.o
 
 DEBUG_FLAGS=-g -DDEBUG=3
 

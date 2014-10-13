@@ -15,7 +15,6 @@
 #include "common.h"
 #include "tinymac.h"
 #include "phy.h"
-#include "timer.h"
 #include "client/client.h"
 
 #define MAX_EVENTS		4
@@ -92,14 +91,14 @@ int main(void)
 		return 1;
 	}
 
-	/* Create a timer fd for despatching timer callbacks */
+	/* Create a timer fd for periodic handler */
 	timer_fd = timerfd_create(CLOCK_REALTIME, 0);
 	if (timer_fd < 0) {
 		perror("timerfd_create");
 		return 1;
 	}
 	its.it_interval.tv_sec = 0;
-	its.it_interval.tv_nsec = 10000000ull; /* 10ms timer tick */
+	its.it_interval.tv_nsec = 1000000ull * TINYMAC_TICK_MS;
 	its.it_value = its.it_interval;
 	if (timerfd_settime(timer_fd, 0, &its, NULL) < 0) {
 		perror("timerfd_settime");
@@ -111,8 +110,6 @@ int main(void)
 		perror("epoll_ctl");
 		return 1;
 	}
-
-	timer_request_callback(tinymac_tick_handler, NULL, TIMER_MILLIS(250), 0);
 
 	while (!quit) {
 		int n, nfds;
@@ -126,14 +123,14 @@ int main(void)
 
 		for (n = 0; n < nfds; n++) {
 			if (events[n].data.u32 == 0) {
-				/* tinymac */
-				tinymac_event_handler();
+				/* PHY event */
+				phy_event_handler();
 			} else if (events[n].data.u32 == 1) {
 				/* tick */
 				char dummy[8];
 				read(timer_fd, dummy, sizeof(dummy));
 
-				timer_despatch_callbacks();
+				tinymac_tick_handler(NULL);
 
 				mqttsn_c_handler(ctx, NULL, 0); /* periodic call */
 
