@@ -133,11 +133,14 @@ static inline void tinymac_cancel_callback(tinymac_timer_t *timer)
 	timer->callback = NULL;
 }
 
-static inline void tinymac_despatch_callback(tinymac_timer_t *timer)
+static void tinymac_despatch_callback(tinymac_timer_t *timer)
 {
 	if (timer->callback && ((int32_t)(tinymac_ctx->tick_count - timer->expiry) >= 0)) {
-		timer->callback(timer->arg);
+		tinymac_timer_cb_t callback = timer->callback;
+
+		/* Callback may set a new timer, so we need to clear the current one first */
 		timer->callback = NULL;
+		callback(timer->arg);
 	}
 }
 
@@ -151,16 +154,17 @@ void tinymac_dump_nodes(void)
 	printf("Permit attach: %s\n", tinymac_ctx->permit_attach ? "Yes" : "No");
 	printf("\nKnown nodes:\n\n");
 
-	printf("******************************************************************\n");
-	printf("| Addr | UUID             | Flags | State           | Last Heard |\n");
-	printf("******************************************************************\n");
+	printf("**********************************************************************\n");
+	printf("| Addr | UUID             | Flags | State           | Last Heard Ago |\n");
+	printf("**********************************************************************\n");
 	for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
 		if (node->uuid) {
 			printf("|  %02X  | %016" PRIX64 " | %02X    | %15s | %10u |\n",
-				node->addr, node->uuid, node->flags, tinymac_node_states[node->state], node->last_heard);
+				node->addr, node->uuid, node->flags, tinymac_node_states[node->state],
+					tinymac_ctx->tick_count - node->last_heard);
 		}
 	}
-	printf("******************************************************************\n\n");
+	printf("**********************************************************************\n\n");
 
 }
 
@@ -806,6 +810,9 @@ int tinymac_init(const tinymac_params_t *params)
 	phy_register_recv_cb(tinymac_recv_cb);
 	tinymac_ctx->phy_mtu = phy_get_mtu();
 
+	/* Enable receiver - FIXME: What about sleeping? */
+	phy_listen();
+
 	return 0;
 }
 
@@ -864,6 +871,7 @@ void tinymac_tick_handler(void *arg)
 		}
 
 		/* Despatch deferred operations */
+		tinymac_despatch_callback(&tinymac_ctx->coord.timer);
 		tinymac_despatch_callback(&tinymac_ctx->timer);
 	}
 
