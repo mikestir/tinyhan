@@ -15,7 +15,7 @@
 #include "common.h"
 #include "tinymac.h"
 #include "phy.h"
-#include "client/client.h"
+#include "mqttsn-client.h"
 
 #define MAX_EVENTS		4
 

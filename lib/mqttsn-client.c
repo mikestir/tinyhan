@@ -8,7 +8,7 @@
 #include <string.h>
 
 #include "common.h"
-#include "client.h"
+#include "mqttsn-client.h"
 
 #ifdef DEBUG
 // for debugging state changes
