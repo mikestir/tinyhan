@@ -7,6 +7,9 @@
 
 #include <stdint.h>
 #include <assert.h>
+#include <stdlib.h>
+
+//#undef DEBUG
 
 #include "common.h"
 #include "phy.h"

@@ -10,6 +10,8 @@
 #include <string.h>
 #include <inttypes.h>
 
+//#undef DEBUG
+
 #include "common.h"
 #include "phy.h"
 #include "tinymac.h"
@@ -113,6 +115,9 @@ typedef struct {
 	uint8_t					bseq;			/*< Current outbound beacon serial number (coordinator) */
 	tinymac_node_t			nodes[TINYMAC_MAX_NODES];	/*< Coordinator: List of known nodes */
 	boolean_t				permit_attach;	/*< Whether or not we are accepting registration requests */
+
+	tinymac_reg_cb_t		reg_cb;			/* Node registration callback */
+	tinymac_reg_cb_t		dereg_cb;		/* Node deregistration callback */
 #endif
 } tinymac_t;
 
@@ -229,6 +234,9 @@ static tinymac_node_t* tinymac_get_node_by_addr(uint8_t addr)
 
 static void tinymac_node_lost(tinymac_node_t *node)
 {
+	/* FIXME: There is duplicate functionality in tinymac_send_timeout, and it
+	 * may also be useful to have a "Lost" state as well as Unregistered */
+
 	ERROR("Node %02X has gone away\n", node->addr);
 
 	node->state = tinymacNodeState_Unregistered;
@@ -238,6 +246,13 @@ static void tinymac_node_lost(tinymac_node_t *node)
 		tinymac_ctx->addr = TINYMAC_ADDR_UNASSIGNED;
 		tinymac_ctx->net_id = TINYMAC_NETWORK_ANY;
 	}
+
+#if WITH_TINYMAC_COORDINATOR
+	/* Invoke callback */
+	if (tinymac_ctx->dereg_cb) {
+		tinymac_ctx->dereg_cb(node->uuid, node->addr);
+	}
+#endif
 }
 
 static void tinymac_timeout_timer(void *arg)
@@ -261,6 +276,13 @@ static void tinymac_send_timeout(void *arg)
 	 * intervals to allow for the possibility of a client missing the beacon */
 	ERROR("Timeout for pending send to node %02X - node has gone away\n", node->addr);
 	node->state = tinymacNodeState_Unregistered;
+
+#if WITH_TINYMAC_COORDINATOR
+	/* Invoke callback */
+	if (tinymac_ctx->dereg_cb) {
+		tinymac_ctx->dereg_cb(node->uuid, node->addr);
+	}
+#endif
 }
 
 /* FIXME: Handle retries to sleeping nodes (see flow chart) */
@@ -608,11 +630,16 @@ static void tinymac_rx_registration_request(tinymac_header_t *hdr, size_t size)
 		resp.status = tinymacRegistrationStatus_NetworkFull;
 	}
 
-	tinymac_dump_nodes();
-
 	/* Send response */
 	tinymac_tx_packet(NULL, (uint16_t)tinymacType_RegistrationResponse,
 			(const char*)&resp, sizeof(resp));
+
+	tinymac_dump_nodes();
+
+	/* Invoke callback */
+	if (tinymac_ctx->reg_cb) {
+		tinymac_ctx->reg_cb(node->uuid, node->addr);
+	}
 }
 
 static void tinymac_rx_deregistration_request(tinymac_header_t *hdr, size_t size)
@@ -639,14 +666,19 @@ static void tinymac_rx_deregistration_request(tinymac_header_t *hdr, size_t size
 	INFO("De-registered node %02X for %016" PRIX64 " reason %u\n", hdr->src_addr, node->uuid, detach->reason);
 	node->state = tinymacNodeState_Unregistered;
 
-	tinymac_dump_nodes();
-
 	/* Send response */
 	resp.uuid = detach->uuid;
 	resp.addr = TINYMAC_ADDR_UNASSIGNED;
 	resp.status = tinymacRegistrationStatus_Success;
 	tinymac_tx_packet(node, (uint16_t)tinymacType_RegistrationResponse,
 			(const char*)&resp, sizeof(resp));
+
+	tinymac_dump_nodes();
+
+	/* Invoke callback */
+	if (tinymac_ctx->dereg_cb) {
+		tinymac_ctx->dereg_cb(node->uuid, node->addr);
+	}
 }
 #endif
 
@@ -885,6 +917,17 @@ void tinymac_permit_attach(boolean_t permit)
 
 	tinymac_ctx->permit_attach = permit;
 }
+
+void tinymac_register_reg_cb(tinymac_reg_cb_t cb)
+{
+	tinymac_ctx->reg_cb = cb;
+}
+
+void tinymac_register_dereg_cb(tinymac_reg_cb_t cb)
+{
+	tinymac_ctx->dereg_cb = cb;
+}
+
 #endif
 
 int tinymac_send(uint8_t dest, const char *buf, size_t size)
