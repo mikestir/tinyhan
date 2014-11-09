@@ -39,16 +39,16 @@ typedef struct {
 
 typedef enum {
 	tinymacType_Beacon = 0,
-	tinymacType_Reserved1,
 	tinymacType_BeaconRequest,
+	tinymacType_Poll,
 	tinymacType_Ack,
 	tinymacType_RegistrationRequest,
 	tinymacType_DeregistrationRequest,
 	tinymacType_RegistrationResponse,
-	tinymacType_Ping,
+	tinymacType_Reserved7,
 	tinymacType_Reserved8,
 	tinymacType_Reserved9,
-	tinymacType_Reserved10,
+	tinymacType_Data,
 	tinymacType_Reserved11,
 	tinymacType_Reserved12,
 	tinymacType_Reserved13,
@@ -69,7 +69,7 @@ typedef enum {
 	tinymacType_Reserved28,
 	tinymacType_Reserved29,
 	tinymacType_Reserved30,
-	tinymacType_Data,
+	tinymacType_Reserved31,
 } tinymac_packet_type_t;
 
 typedef struct {
@@ -98,7 +98,9 @@ typedef struct {
 	uint16_t		flags;
 } PACKED tinymac_registration_request_t;
 
-#define TINYMAC_ATTACH_FLAGS_SLEEPY				(1 << 0)
+#define TINYMAC_ATTACH_FLAGS_SLEEPY				(1 << 4)
+#define TINYMAC_ATTACH_HEARTBEAT_SHIFT			0
+#define TINYMAC_ATTACH_HEARTBEAT_MASK			(15 << 0)
 
 typedef struct {
 	uint64_t		uuid;
@@ -122,6 +124,7 @@ typedef enum {
 	tinymacRegistrationStatus_NetworkFull,
 	tinymacRegistrationStatus_Shutdown,
 	tinymacRegistrationStatus_Admin,
+	tinymacRegistrationStatus_AddressInvalid,
 } tinymac_registration_status_t;
 
 /* End of protocol definitions */
@@ -129,7 +132,7 @@ typedef enum {
 typedef struct {
 	uint64_t		uuid;
 	boolean_t		coordinator;
-	uint8_t			flags;					/*< Node flags, e.g. SLEEPY */
+	uint16_t		flags;					/*< Node flags, e.g. SLEEPY */
 	uint8_t			beacon_interval;		/*< 250 ms * 2^n, or TINYMAC_BEACON_INTERVAL_NO_BEACON */
 	uint8_t			beacon_offset;
 } tinymac_params_t;
@@ -138,6 +141,12 @@ typedef void (*tinymac_recv_cb_t)(uint8_t src, const char *payload, size_t size)
 typedef void (*tinymac_reg_cb_t)(uint64_t uuid, uint8_t addr);
 
 int tinymac_init(const tinymac_params_t *params);
+
+/*!
+ * Register callback to be invoked when a received packet is to be passed
+ * to the upper layer
+ * \param cb		Pointer to callback to be invoked
+ */
 void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
 
 /*!
@@ -168,8 +177,19 @@ int tinymac_send(uint8_t dest, const char *buf, size_t size);
 
 void tinymac_permit_attach(boolean_t permit);
 
+/*!
+ * Register callback to be invoked when a node registers
+ * \param cb		Pointer to callback to be invoked
+ */
 void tinymac_register_reg_cb(tinymac_reg_cb_t cb);
+
+/*!
+ * Register callback to be invoked when a node goes away
+ * \param cb		Pointer to callback to be invoked
+ */
 void tinymac_register_dereg_cb(tinymac_reg_cb_t cb);
+
 void tinymac_dump_nodes(void);
+
 
 #endif /* MAC_H_ */

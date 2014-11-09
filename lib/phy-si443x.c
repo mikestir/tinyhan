@@ -9,7 +9,7 @@
 #include <assert.h>
 #include <stdlib.h>
 
-//#undef DEBUG
+#undef DEBUG
 
 #include "common.h"
 #include "phy.h"
