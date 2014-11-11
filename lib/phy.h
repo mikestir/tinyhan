@@ -57,6 +57,15 @@ int phy_listen(void);
 int phy_standby(void);
 
 /*!
+ * Places the PHY in standby mode after the specified delay (if the radio
+ * cannot implement this in hardware then the mode change is executed
+ * inside phy_event_handler)
+ *
+ * \return			Zero on success or -ve error code
+ */
+int phy_delayed_standby(uint16_t us);
+
+/*!
  * Register callback function for received packets (\see phy_recv_cb_t)
  *
  * \param cb		Pointer to callback function

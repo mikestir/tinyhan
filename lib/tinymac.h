@@ -137,6 +137,7 @@ typedef struct {
 	uint8_t			beacon_offset;
 } tinymac_params_t;
 
+typedef void (*tinymac_send_cb_t)(int result);
 typedef void (*tinymac_recv_cb_t)(uint8_t src, const char *payload, size_t size);
 typedef void (*tinymac_reg_cb_t)(uint64_t uuid, uint8_t addr);
 
@@ -160,16 +161,19 @@ void tinymac_register_recv_cb(tinymac_recv_cb_t cb);
  */
 void tinymac_tick_handler(void *arg);
 
-
 /*!
- * Send a data packet
+ * Send a data packet.
+ * NOTE: If used under an OS this function must be called from the same thread that
+ * calls the tick handler and the PHY receive handler.
  *
  * \param dest		Destination short address
- * \param buf		Pointer to payload data
+ * \param buf		Pointer to payload data (will be copied if necessary)
  * \param size		Size of payload data
+ * \param validity	Validity period (in seconds) for packets sent to a sleeping node
+ * \param cb		Callback invoked on successful delivery or expiry of validity period
  * \return			Sequence number or -ve error code
  */
-int tinymac_send(uint8_t dest, const char *buf, size_t size);
+int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, tinymac_send_cb_t cb);
 
 /********************/
 /* Coordinator only */

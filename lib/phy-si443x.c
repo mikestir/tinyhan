@@ -314,6 +314,11 @@ static void si443x_event_handler(void)
 			/* End of transmission */
 			phy_si443x_state = stateStandby;
 		}
+		if (status & IWUT) {
+			/* Delayed standby */
+			TRACE("IWUT\n");
+			phy_standby();
+		}
 	}
 }
 
@@ -372,7 +377,8 @@ int phy_resume(void)
 	si443x_write16(R_INT_ENABLE,
 			ENTXFFAFULL | ENTXFFAEM | ENRXFFAFULL |
 			ENPKSENT |
-			ENSWDET | ENPKVALID | ENCRCERROR);
+			ENSWDET | ENPKVALID | ENCRCERROR |
+			ENWUT);
 	return 0;
 }
 
@@ -392,6 +398,21 @@ int phy_standby(void)
 	SI443X_CLEAR_FIFOS();
 	SI443X_MODE_STANDBY();
 	phy_si443x_state = stateStandby;
+	return 0;
+}
+
+int phy_delayed_standby(uint16_t us)
+{
+	uint32_t m;
+
+	FUNCTION_TRACE;
+
+	/* Configure the wake-up timer to generate an interrupt after
+	 * the required delay */
+	m = (uint32_t)us * 32768ul / 4000000ul;
+	si443x_write8(R_WU_PERIOD1, 0);
+	si443x_write16(R_WU_PERIOD2, m);
+	si443x_write8(R_OP_CTRL1, ENWT | RXON | XTON);
 	return 0;
 }
 
@@ -421,7 +442,8 @@ void phy_event_handler(void)
 		/* FIXME: Relying on the Si443x CRC here, which may not be suitable
 		 * for interoperability - insert software calculation here */
 
-		/* Back to idle state otherwise if the callback tries to send something it won't work */
+		/* Back to idle state otherwise if the callback tries to send something it won't work.
+		 * MAC will turn the receiver off at the correct time if we are a sleepy node */
 		phy_listen();
 
 		/* Despatch to callback */
@@ -517,6 +539,9 @@ int phy_send(phy_buf_t *bufs, unsigned int nbufs, uint8_t flags)
 		si443x_event_handler();
 	}
 	TRACE("tx done\n");
+
+	/* Leave receiver on. MAC will turn it off at the correct time if we are a
+	 * sleepy node */
 	phy_listen();
 
 	return 0;
