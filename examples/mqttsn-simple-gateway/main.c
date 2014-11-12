@@ -164,7 +164,7 @@ int main(void)
 					perror("recvfrom");
 					return 1;
 				}
-				tinymac_send((uint8_t)events[n].data.u32, payload, size);
+				tinymac_send((uint8_t)events[n].data.u32, payload, size, 0, NULL);
 			} else if (events[n].data.u32 == MAX_DEVICES + 0) {
 				/* PHY event */
 				phy_event_handler();

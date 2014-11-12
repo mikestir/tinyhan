@@ -125,7 +125,15 @@ int phy_listen(void)
 
 int phy_standby(void)
 {
-	phy_listening = FALSE;
+	/* FIXME: Add test functionality for sleepy nodes */
+	//phy_listening = FALSE;
+	return 0;
+}
+
+int phy_delayed_standby(uint16_t us)
+{
+	/* FIXME: Add test functionality for sleepy nodes */
+	//phy_listening = FALSE;
 	return 0;
 }
 

@@ -47,7 +47,7 @@ static void rx_handler(uint8_t src, const char *buf, size_t size)
 
 static int packet_send(const char *buf, size_t size)
 {
-	return tinymac_send(0, buf, size);
+	return tinymac_send(0, buf, size, 0, NULL);
 }
 
 int main(void)
@@ -58,7 +58,7 @@ int main(void)
 	int epoll_fd, timer_fd;
 	struct itimerspec its;
 	tinymac_params_t params = {
-//			.flags = TINYMAC_ATTACH_FLAGS_SLEEPY,
+			.flags = /* TINYMAC_ATTACH_FLAGS_SLEEPY | */ 5, /* specify hearbeat interval */
 	};
 
 	new_sa.sa_handler = break_handler;
