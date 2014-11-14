@@ -74,13 +74,14 @@ typedef struct {
 } tinymac_timer_t;
 
 typedef struct {
-	tinymac_node_state_t	state;
-	uint8_t					addr;			/*< Assigned short address */
 	uint64_t				uuid;			/*< Unit identifier */
-	tinymac_timer_t			timer;			/*< Timer for ack timeout, etc. */
 	uint32_t				last_heard;		/*< Last heard time (ticks) */
 	uint16_t				flags;			/*< Node flags (from registration) */
+	uint8_t					addr;			/*< Assigned short address */
 	uint8_t					retries;		/*< Number of tx tries remaining */
+	int8_t					rssi;			/*< Last signal strength if known, or 0 */
+	tinymac_node_state_t	state;
+	tinymac_timer_t			timer;			/*< Timer for ack timeout, etc. */
 
 	tinymac_header_t		pending_header;	/*< Header for pending packet */
 	size_t					pending_size;	/*< Size of pending outbound payload */
@@ -788,6 +789,7 @@ static void tinymac_recv_cb(const char *buf, size_t size, int rssi)
 			/* Update last heard */
 			INFO("Updated last_heard for node %02X\n", hdr->src_addr);
 			node->last_heard = tinymac_ctx->tick_count;
+			node->rssi = (int8_t)rssi;
 
 			if (hdr->flags & TINYMAC_FLAGS_ACK_REQUEST) {
 				/* Acknowledgement requested */
@@ -1042,12 +1044,13 @@ void tinymac_dump_nodes(void)
 	printf("Permit attach: %s\n", tinymac_ctx->permit_attach ? "Yes" : "No");
 	printf("\nKnown nodes:\n\n");
 
-	printf("Addr  UUID              State             Last Heard Ago  Heartbeat  Sleepy\n");
-	printf("----------------------------------------------------------------------------\n");
+	printf("Addr  UUID              State             RSSI  Last Heard Ago  Heartbeat  Sleepy\n");
+	printf("---------------------------------------------------------------------------------\n");
 	for (n = 0; n < TINYMAC_MAX_NODES; n++, node++) {
 		if (node->uuid) {
-			printf("%02X    %016" PRIX64 "  %16s  %14u  %9u  %s\n",
+			printf("%02X    %016" PRIX64 "  %16s  %4d  %14u  %9u  %s\n",
 					node->addr, node->uuid, tinymac_node_states[node->state],
+					node->rssi,
 					(tinymac_ctx->tick_count - node->last_heard) * TINYMAC_TICK_MS / 1000,
 					(1 << (node->flags & TINYMAC_ATTACH_HEARTBEAT_MASK)),
 					(node->flags & TINYMAC_ATTACH_FLAGS_SLEEPY) ? "Yes" : "");
