@@ -48,17 +48,14 @@ static const char *tinymac_node_states[] = {
 #define TINYMAC_MAX_RETRIES				3
 /*! Time to wait for an acknowledgement response (ms) */
 #define TINYMAC_ACK_TIMEOUT				250
-/*! Time to wait for a sleeping node to call in for a pending packet before giving up (s)
- * FIXME: This should really be releated to the beacon interval in some way
- * NOTE: Maybe replace this with a per-packet "validity period" provided in the send API  */
-#define TINYMAC_SEND_TIMEOUT			30
 /*! Time for an unregistered node to wait between beacon request transmissions (seconds) */
 #define TINYMAC_BEACON_REQUEST_TIMEOUT	10
 /*! Time to wait for a registration request to be answered (ms) */
 #define TINYMAC_REGISTRATION_TIMEOUT	1000
 /*! Coordinator grace period to allow after heartbeat expiry before assuming a client has gone (seconds) */
 #define TINYMAC_HEARTBEAT_GRACE			2
-
+/*! Time a sleeping node should listen after transmitting or receiving a packet with
+ * data pending bit set (microseconds) */
 #define TINYMAC_LISTEN_PERIOD_US		10000
 
 #define TINYMAC_MILLIS(ms)				((ms) / TINYMAC_TICK_MS)
@@ -81,13 +78,14 @@ typedef struct {
 	uint8_t					retries;		/*< Number of tx tries remaining */
 	int8_t					rssi;			/*< Last signal strength if known, or 0 */
 	tinymac_node_state_t	state;
-	tinymac_timer_t			timer;			/*< Timer for ack timeout, etc. */
 
 	tinymac_header_t		pending_header;	/*< Header for pending packet */
 	size_t					pending_size;	/*< Size of pending outbound payload */
 	char					pending[TINYMAC_MAX_PAYLOAD];	/*< Pending outbound packet payload */
-	uint32_t				valid_until;	/*< Time at which the packet becomes invalid */
 	tinymac_send_cb_t		send_cb;		/*< Callback invoked when pending packet sent/expires */
+
+	tinymac_timer_t			ack_timer;		/*< Timer for ack timeout */
+	tinymac_timer_t			validity_timer;	/*< Validity timeout for deferred sends */
 } tinymac_node_t;
 
 typedef struct {
@@ -270,21 +268,23 @@ static void tinymac_request_timeout(void *arg)
 /*!
  * Timer callback invoked when a pending send is not completed within the
  * packet's validity period.
- * FIXME: This will invalidate the destination node, which may not be the right
- * thing to do (we should probably only do that if the heartbeat times out).
- * Alternative behaviour would be to simply discard the pending packet
  */
-static void tinymac_send_timeout(void *arg)
+static void tinymac_validity_timeout(void *arg)
 {
 	tinymac_node_t *node = (tinymac_node_t*)arg;
 
-	/* If the destination node doesn't call in for the pending packet then we
-	 * assume it has gone away (since this pending packet could have been a ping) */
-	ERROR("Timeout for pending send to node %02X\n", node->addr);
-	tinymac_deregister_node(node);
+	ERROR("Validity expired for pending send to node %02X\n", node->addr);
+
+	/* Clear pending packet */
+	node->state = tinymacNodeState_Registered;
+	tinymac_cancel_timer(&node->ack_timer);
+
+	/* Invoke callback for failure */
+	if (node->send_cb) {
+		node->send_cb(-1);
+	}
 }
 
-/* FIXME: Handle retries to sleeping nodes (see flow chart) */
 /*!
  * Timer callback invoked when a packet has been sent with AR set and no
  * acknowledgement was received
@@ -300,17 +300,29 @@ static void tinymac_ack_timeout(void *arg)
 				{ (char*)node->pending, node->pending_size },
 		};
 
-		/* Re-send and schedule another timer */
-		TRACE("OUT (retry): %04X %02X %02X %02X %02X (%zu)\n",
-				node->pending_header.flags,
-				node->pending_header.net_id,
-				node->pending_header.dest_addr,
-				node->pending_header.src_addr,
-				node->pending_header.seq,
-				node->pending_size);
-		tinymac_set_timer(&node->timer, tinymac_ack_timeout, node, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
-		tinymac_phy_send(bufs, ARRAY_SIZE(bufs), 0);
+		if (node->flags & TINYMAC_ATTACH_FLAGS_SLEEPY) {
+			/* Defer re-send to sleepy node */
+			TRACE("(pending)\n");
+			node->state = tinymacNodeState_SendPending;
+		} else {
+			/* Re-send immediately and schedule another timeout */
+			TRACE("OUT (retry): %04X %02X %02X %02X %02X (%zu)\n",
+					node->pending_header.flags,
+					node->pending_header.net_id,
+					node->pending_header.dest_addr,
+					node->pending_header.src_addr,
+					node->pending_header.seq,
+					node->pending_size);
+			tinymac_set_timer(&node->ack_timer, tinymac_ack_timeout, node, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
+			tinymac_phy_send(bufs, ARRAY_SIZE(bufs), 0);
+		}
 	} else {
+		/* Invoke callback for failure */
+		tinymac_cancel_timer(&node->validity_timer);
+		if (node->send_cb) {
+			node->send_cb(-1);
+		}
+
 		/* Give up - other end is unreachable */
 		tinymac_deregister_node(node);
 	}
@@ -370,38 +382,40 @@ static int tinymac_tx_packet(tinymac_node_t *dest, uint8_t flags_type, const cha
 			return -1;
 		}
 
-		/* If destination node is sleepy then defer the transmission (packet contents are
-		 * copied) */
-		if (dest->flags & TINYMAC_ATTACH_FLAGS_SLEEPY) {
-			/* Destination is a sleepy node */
-			TRACE("Pending transmission for node %02X\n", dest->addr);
+		if ((flags_type & TINYMAC_FLAGS_ACK_REQUEST) || (dest->flags & TINYMAC_ATTACH_FLAGS_SLEEPY)) {
+			/* Copy packet for (re-)transmission */
 			memcpy(dest->pending, buf, size);
 			memcpy(&dest->pending_header, &hdr, sizeof(hdr));
 			dest->pending_size = size;
-			dest->state = tinymacNodeState_SendPending;
+			dest->send_cb = cb;
+			dest->retries = TINYMAC_MAX_RETRIES;
+		}
 
-			/* Start a timer for send timeout - the recipient must call in and ask for
-			 * pending packets before this expires */
-			tinymac_set_timer(&dest->timer, tinymac_send_timeout, dest, TINYMAC_SECONDS(TINYMAC_SEND_TIMEOUT));
+		/* If destination node is sleepy then defer the transmission (packet contents are
+		 * copied above) */
+		if (dest->flags & TINYMAC_ATTACH_FLAGS_SLEEPY) {
+			TRACE("Pending transmission for node %02X\n", dest->addr);
+
+			/* Start validity period timer.  The node must call in before this
+			 * expires otherwise the send will fail */
+			tinymac_set_timer(&dest->validity_timer, tinymac_validity_timeout, dest, TINYMAC_SECONDS(validity));
+			dest->state = tinymacNodeState_SendPending;
 			return 0;
+		}
+
+		/* We are going to send this packet immediately - if an ack is requested then
+		 * start the timer now */
+		if (flags_type & TINYMAC_FLAGS_ACK_REQUEST) {
+			TRACE("Waiting for ack from node %02X\n", dest->addr);
+
+			/* Start a timer for ack receipt and reset retry counter */
+			tinymac_set_timer(&dest->ack_timer, tinymac_ack_timeout, dest, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
+			dest->state = tinymacNodeState_WaitAck;
 		}
 	}
 
-	if (dest && (flags_type & TINYMAC_FLAGS_ACK_REQUEST)) {
-		/* Unicast packet and an ack was requested - copy the packet in case we need
-		 * to retransmit */
-		TRACE("Waiting for ack from node %02X\n", dest->addr);
-		memcpy(dest->pending, buf, size);
-		memcpy(&dest->pending_header, &hdr, sizeof(hdr));
-		dest->pending_size = size;
-		dest->state = tinymacNodeState_WaitAck;
-
-		/* Start a timer for ack receipt and reset retry counter */
-		dest->retries = TINYMAC_MAX_RETRIES;
-		tinymac_set_timer(&dest->timer, tinymac_ack_timeout, dest, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
-	}
-
 	/* Send now */
+	/* FIXME: Invoke callback on successful immediate send? */
 	TRACE("OUT: %04X %02X %02X %02X %02X (%zu)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, size);
 	return tinymac_phy_send(bufs, ARRAY_SIZE(bufs), 0);
 }
@@ -413,11 +427,10 @@ static int tinymac_tx_pending(tinymac_node_t *node)
 			{ (char*)&hdr, sizeof(hdr) },
 			{ NULL, 0 },
 	};
+	int rc;
 
 	/* Send pending packet if any */
 	if (node->state == tinymacNodeState_SendPending) {
-		/* Cancel validity timer */
-		tinymac_cancel_timer(&node->timer);
 		node->state = tinymacNodeState_Registered;
 
 		memcpy(&hdr, &node->pending_header, sizeof(hdr));
@@ -426,12 +439,18 @@ static int tinymac_tx_pending(tinymac_node_t *node)
 		if (hdr.flags & TINYMAC_FLAGS_ACK_REQUEST) {
 			/* Start a timer and prepare for a retransmission if we don't get an ACK */
 			TRACE("Waiting for ack from node %02X\n", node->addr);
-			node->retries = TINYMAC_MAX_RETRIES;
 			node->state = tinymacNodeState_WaitAck;
-			tinymac_set_timer(&node->timer, tinymac_ack_timeout, node, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
+			tinymac_set_timer(&node->ack_timer, tinymac_ack_timeout, node, TINYMAC_MILLIS(TINYMAC_ACK_TIMEOUT));
 		}
 		TRACE("PENDING OUT: %04X %02X %02X %02X %02X (%zu)\n", hdr.flags, hdr.net_id, hdr.dest_addr, hdr.src_addr, hdr.seq, node->pending_size);
-		return tinymac_phy_send(bufs, ARRAY_SIZE(bufs), 0);
+		tinymac_phy_send(bufs, ARRAY_SIZE(bufs), 0);
+		if (!(hdr.flags & TINYMAC_FLAGS_ACK_REQUEST)) {
+			/* No ack - required so we assume success */
+			tinymac_cancel_timer(&node->validity_timer);
+			if (node->send_cb) {
+				node->send_cb(0);
+			}
+		}
 	}
 	return 0;
 }
@@ -794,10 +813,9 @@ static void tinymac_recv_cb(const char *buf, size_t size, int rssi)
 			if (hdr->flags & TINYMAC_FLAGS_ACK_REQUEST) {
 				/* Acknowledgement requested */
 				tinymac_tx_ack(node, hdr->seq);
-			} else {
-				/* Send pending packet */
-				tinymac_tx_pending(node);
 			}
+			/* Send any pending packet */
+			tinymac_tx_pending(node);
 		} else {
 			/* Address not registered */
 			ERROR("Ignoring unknown source node %02X\n", hdr->src_addr);
@@ -838,10 +856,16 @@ static void tinymac_recv_cb(const char *buf, size_t size, int rssi)
 
 		if (node && node->state == tinymacNodeState_WaitAck) {
 			if (hdr->seq == node->pending_header.seq) {
-				/* Ack ok, cancel timer */
+				/* Ack ok, cancel timers */
 				TRACE("Valid ack received from %02X for %02X\n", hdr->src_addr, hdr->seq);
 				node->state = tinymacNodeState_Registered;
-				tinymac_cancel_timer(&node->timer);
+				tinymac_cancel_timer(&node->ack_timer);
+				tinymac_cancel_timer(&node->validity_timer);
+
+				/* Callback success */
+				if (node->send_cb) {
+					node->send_cb(0);
+				}
 			} else {
 				ERROR("Bad ack received from %02X\n", hdr->src_addr);
 			}
@@ -981,7 +1005,8 @@ void tinymac_tick_handler(void *arg)
 			}
 
 			/* Despatch deferred operations */
-			tinymac_despatch_timer(&node->timer);
+			tinymac_despatch_timer(&node->ack_timer);
+			tinymac_despatch_timer(&node->validity_timer);
 		}
 	} else
 #endif
@@ -996,7 +1021,8 @@ void tinymac_tick_handler(void *arg)
 		}
 
 		/* Despatch deferred operations */
-		tinymac_despatch_timer(&tinymac_ctx->coord.timer);
+		tinymac_despatch_timer(&tinymac_ctx->coord.ack_timer);
+		tinymac_despatch_timer(&tinymac_ctx->coord.validity_timer);
 		tinymac_despatch_timer(&tinymac_ctx->timer);
 	}
 
@@ -1013,7 +1039,11 @@ int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, 
 		return -1;
 	}
 
-	return tinymac_tx_packet(node, (uint16_t)tinymacType_Data,
+	if (validity == 0) {
+		validity = 2; // FIXME: default
+	}
+
+	return tinymac_tx_packet(node, TINYMAC_FLAGS_ACK_REQUEST | (uint16_t)tinymacType_Data,
 			buf, size, validity, cb);
 }
 
