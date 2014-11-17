@@ -1,0 +1,54 @@
+TinyHAN - Tiny Home Area Network
+--------------------------------
+
+TinyHAN is a general purpose datagram oriented protocol for building sensor and control networks.
+It is similar in concept to 802.15.4, but designed to work on ultra low cost hardware such
+as radio modules from HopeRF (e.g. RFM22B, RFM69W).  Intended for domestic applications, there
+is no support for meshing, reducing the code size dramatically.
+
+The protocol adopts a layered design, with this library handling the physical and MAC layers.
+PHY drivers are pluggable allowing interoperation between devices using different radios.  There
+is also a test PHY using UDP multicast that enables the library to be tested on a Linux PC.
+
+The MAC provides the following key features:
+
+* Application datagram transmission with or without acknowledgement
+* Automatic re-transmission of unacknowledged packets
+* Support for two-way communication with sleeping (battery powered) nodes
+* Per-packet validity period
+* Automatic node registration and address assignment
+* Monitoring of node presence (heartbeat) and signal strength, notification of node loss
+* Optional periodic beacons to reduce transmission latency to sleeping nodes
+
+Encryption and authentication are not supported in this version, but are on the roadmap as key
+requirements.
+
+Library
+-------
+
+The protocol is implemented as a platform-independent library targeting both small and large
+embedded systems. A small platform abstraction layer is used to handle OS and hardware
+dependencies.  Currently, the library is in-use on the following targets:
+
+* Linux PC using the UDP demo PHY
+* Atmel AVR ATMEGA328 (bare metal) with RFM23B radio
+* STM32F407 running FreeRTOS, with RFM23B radio
+
+Transports
+----------
+
+TinyHAN can carry any datagram based transport protocol (e.g. 6LoWPAN should be feasible).
+Examples are included for:
+
+* TinyHAN application protocol - a work-in-progress binary name/value pair protocol with
+  extermely low software overhead designed for sensing and control applications
+* MQTT-SN
+
+Tools
+-----
+
+A GnuRadio tool is included to enable real-time debugging of a network by sniffing signals
+off the air.  The tool works with low cost RTL-SDR dongles, or could be modified to
+work with other SDRs such as HackRF or FCD.
+
+

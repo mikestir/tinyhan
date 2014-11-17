@@ -1043,7 +1043,7 @@ int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, 
 		validity = 2; // FIXME: default
 	}
 
-	return tinymac_tx_packet(node, TINYMAC_FLAGS_ACK_REQUEST | (uint16_t)tinymacType_Data,
+	return tinymac_tx_packet(node, /* TINYMAC_FLAGS_ACK_REQUEST  |*/ (uint16_t)tinymacType_Data,
 			buf, size, validity, cb);
 }
 
