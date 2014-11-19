@@ -1047,7 +1047,9 @@ void tinymac_tick_handler(void *arg)
 	tinymac_ctx->tick_count++;
 }
 
-int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, tinymac_send_cb_t cb)
+int tinymac_send(uint8_t dest, const char *buf, size_t size,
+		uint16_t validity, uint8_t flags,
+		tinymac_send_cb_t cb)
 {
 	tinymac_node_t *node;
 
@@ -1058,10 +1060,11 @@ int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, 
 	}
 
 	if (validity == 0) {
-		validity = 2; // FIXME: default
+		/* Default validity period to the heartbeat interval for the destination */
+		validity = 1 << (node->flags & TINYMAC_ATTACH_HEARTBEAT_MASK);
 	}
 
-	return tinymac_tx_packet(node, /* TINYMAC_FLAGS_ACK_REQUEST  |*/ (uint16_t)tinymacType_Data,
+	return tinymac_tx_packet(node, (flags & TINYMAC_FLAGS_ACK_REQUEST) | (uint16_t)tinymacType_Data,
 			buf, size, validity, cb);
 }
 

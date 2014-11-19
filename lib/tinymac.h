@@ -188,10 +188,11 @@ void tinymac_tick_handler(void *arg);
  * \param buf		Pointer to payload data (will be copied if necessary)
  * \param size		Size of payload data
  * \param validity	Validity period (in seconds) for packets sent to a sleeping node
+ * \param flags		Flags to set (TINYMAC_FLAGS_ACK_REQUEST only)
  * \param cb		Callback invoked on successful delivery or expiry of validity period
  * \return			Sequence number or -ve error code
  */
-int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, tinymac_send_cb_t cb);
+int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, uint8_t flags, tinymac_send_cb_t cb);
 
 /********************/
 /* Coordinator only */

@@ -65,7 +65,7 @@ static void rx_handler(uint8_t src, const char *buf, size_t size)
 
 static int packet_send(const char *buf, size_t size)
 {
-	return tinymac_send(0, buf, size, 0, NULL);
+	return tinymac_send(0, buf, size, 0, 0, NULL);
 }
 
 int main(void)

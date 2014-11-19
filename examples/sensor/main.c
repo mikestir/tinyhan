@@ -112,7 +112,7 @@ static void rx_handler(uint8_t src, const char *buf, size_t size)
 static void post_message(void)
 {
 	uint16_t battmv = vbatt_mv();
-	tinymac_send(0, (const char*)&battmv, sizeof(battmv), 0, NULL);
+	tinymac_send(0, (const char*)&battmv, sizeof(battmv), 0, 0, NULL);
 }
 
 int main(void)
