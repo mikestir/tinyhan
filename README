@@ -21,7 +21,9 @@ The MAC provides the following key features:
 * Optional periodic beacons to reduce transmission latency to sleeping nodes
 
 Encryption and authentication are not supported in this version, but are on the roadmap as key
-requirements.
+requirements.  Also in the spec but not yet implemented is listen-before-talk (carrier-sense), to
+reduce the likelihood of interference between unsynchronised nodes.
+
 
 Library
 -------
@@ -34,6 +36,7 @@ dependencies.  Currently, the library is in-use on the following targets:
 * Atmel AVR ATMEGA328 (bare metal) with RFM23B radio
 * STM32F407 running FreeRTOS, with RFM23B radio
 
+
 Transports
 ----------
 
@@ -44,6 +47,7 @@ Examples are included for:
   extermely low software overhead designed for sensing and control applications
 * MQTT-SN
 
+
 Tools
 -----
 
@@ -51,7 +55,109 @@ A GnuRadio tool is included to enable real-time debugging of a network by sniffi
 off the air.  The tool works with low cost RTL-SDR dongles, or could be modified to
 work with other SDRs such as HackRF or FCD.
 
-Building
+
+Examples
 --------
 
+Several examples are provided to demonstrate the use of the TinyHAN library.  Note that
+these are not intended to be complete applications.
 
+The basic steps for implementing a TinyHAN node in a typical small embedded
+system are as follows:
+
+- Call phy_init() during early startup.
+- Call tinymac_init(&params) during early startup, where params is a pointer to
+  a tinymac_params_t structure containing the node configuration.
+- Call tinymac_register_recv_cb to register a function to be called when an incoming
+  application message is received.
+- Arrange for tinymac_tick_handler to be called every 250ms.
+- Arrange for phy_event_handler to be called at least whenever the radio indicates activity
+  (e.g. after being woken by an external interrupt).
+- Call tinymac_send whenever the application wishes to transmit a message.
+
+To create a coordinator the tinymac_params_t structure must define coordinator=1, and
+tinymac_permit_attach(1) must be called to enable nodes to connect.  The coordinator role
+supports additional callbacks to be invoked on attachment and detachment of remote nodes.
+
+
+Building the Sensor Example
+---------------------------
+
+The AVR example in examples/sensor is designed to be built standalone (it is not for an
+Arduino, although it can probably be made to run on one fairly easily).  It requires
+the AVR GCC toolchain and has been tested under Linux using the AVRDUDE programmer and
+a genuine Atmel AVRISP.  A schematic for example hardware is included as a PDF.
+
+The demo uses a hard-coded UUID (which must be changed if more than one node is being
+tested in the same area) and will register with any coordinator that will permit attachment.
+After registration the node will transmit its battery voltage every 5 seconds, and will
+toggle an LED according to a value received from the coordinator.  The node is configured
+as a sleeping device, so messages from the coordinator are buffered and can take several
+seconds to deliver.
+
+Total code size is a little over 5KB at present (it is likely this can be reduced through
+further optimisation of the TinyHAN MAC).  Average current consumption was estimated to be
+around 80 uA with two-way communication, suggesting around 3.5 years lifetime from 2 AA
+cells.  Further power optimisation is likely to be feasible.
+
+To build and program a board:
+
+$ make
+$ make program
+
+
+Building the PC based MQTT-SN Example
+-------------------------------------
+
+This requires a third-party MQTT-SN broker running on the same machine (e.g. RSMB).
+RSMB can be started with the following config file (save as 'config'):
+
+ trace_output protocol
+ listener 1883 INADDR_ANY mqtts
+ 
+$ ./broker config
+
+Build the client and gateway:
+
+$ cd examples/mqttsn-client
+$ make
+$ cd examples/mqttsn-simple-gateway
+$ make
+
+Start the MQTT-SN broker and run the TinyHAN gateway in one terminal:
+
+$ cd examples/mqttsn-simple-gateway
+$ ./build-simplegateway/simplegateway
+
+In another terminal run an instance of the client:
+
+$ cd examples/mqttsn-client
+$ ./build-mqttsn_client/mqttsn_client
+
+The client will immediately register with the coordinator/gateway and attempt
+to connect to the MQTT-SN broker after a few seconds.  The client subscribes to
+the following example topics:
+
+zone/1/target
+zone/1/message
+
+Publishing a message to either of these topics (e.g. using mqtt-sn-tools) will result
+in the message appearing in the client terminal.
+
+
+License
+-------
+
+ Copyright 2013-2014 Mike Stirling
+
+ Licensed under the Apache License, Version 2.0 (the "License");
+ you may not use this file except in compliance with the License.
+ You may obtain a copy of the License at
+
+    http://www.apache.org/licenses/LICENSE-2.0 
+
+ Unless required by applicable law or agreed to in writing, software
+ distributed under the License is distributed on an "AS IS" BASIS,
+ WITHOUT WARRANTIES OR CONDITIONS OF ANY KIND, either express or implied.
+ See the License for the specific language governing permissions and
+ limitations under the License.
