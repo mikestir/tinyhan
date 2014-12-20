@@ -29,6 +29,8 @@
 #include <stdint.h>
 #include "common.h"
 
+#define TINYMAC_MAX_UUID_STRING				16
+
 #define TINYMAC_ADDR_BROADCAST				0xFF
 #define TINYMAC_ADDR_UNASSIGNED				0xFF
 #define TINYMAC_NETWORK_ANY					0xFF
@@ -194,6 +196,13 @@ void tinymac_tick_handler(void *arg);
  */
 int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, uint8_t flags, tinymac_send_cb_t cb);
 
+/*!
+ * Check if we are connected to a coordinator
+ *
+ * \return			0 (false) if not connected, 1 (true) if we are
+ */
+int tinymac_is_registered(void);
+
 /********************/
 /* Coordinator only */
 /********************/
@@ -211,6 +220,23 @@ void tinymac_register_reg_cb(tinymac_reg_cb_t cb);
  * \param cb		Pointer to callback to be invoked
  */
 void tinymac_register_dereg_cb(tinymac_reg_cb_t cb);
+
+/*!
+ * Look up the UUID of the device currently assigned to
+ * the specified network address
+ *
+ * \param addr		Address to look up
+ * \return			UUID of registered node or 0 if not found
+ */
+uint64_t tinymac_get_uuid_for_addr(uint8_t addr);
+
+/*!
+ * Look up the current network address of the specified UUID
+ *
+ * \param uuid		UUID to look up
+ * \return			Current network address or 0 if not registered
+ */
+uint8_t tinymac_get_addr_for_uuid(uint64_t uuid);
 
 void tinymac_dump_nodes(void);
 

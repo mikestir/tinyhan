@@ -1068,6 +1068,11 @@ int tinymac_send(uint8_t dest, const char *buf, size_t size,
 			buf, size, validity, cb);
 }
 
+int tinymac_is_registered(void)
+{
+	return (tinymac_ctx->state == tinymacClientState_Registered) ? 1 : 0;
+}
+
 #if WITH_TINYMAC_COORDINATOR
 void tinymac_permit_attach(boolean_t permit)
 {
@@ -1084,6 +1089,28 @@ void tinymac_register_reg_cb(tinymac_reg_cb_t cb)
 void tinymac_register_dereg_cb(tinymac_reg_cb_t cb)
 {
 	tinymac_ctx->dereg_cb = cb;
+}
+
+uint64_t tinymac_get_uuid_for_addr(uint8_t addr)
+{
+	tinymac_node_t *node;
+
+	node = tinymac_get_node_by_addr(addr);
+	if (node == NULL) {
+		return 0;
+	}
+	return node->uuid;
+}
+
+uint8_t tinymac_get_addr_for_uuid(uint64_t uuid)
+{
+	tinymac_node_t *node;
+
+	node = tinymac_get_node_by_uuid(uuid);
+	if (node == NULL || node->state == tinymacNodeState_Unregistered) {
+		return 0;
+	}
+	return node->addr;
 }
 
 void tinymac_dump_nodes(void)

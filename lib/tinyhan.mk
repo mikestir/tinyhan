@@ -1,7 +1,7 @@
 INC_DIRS+=tinyhan
 SRC_DIRS+=tinyhan
 
-OBJECTS+=tinymac.o
+OBJECTS+=tinymac.o tinyapp.o
 ifeq ($(PHY), udp)
 OBJECTS+=phy-udp.o
 endif
