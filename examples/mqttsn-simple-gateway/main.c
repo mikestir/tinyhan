@@ -53,7 +53,7 @@ static void break_handler(int signum)
 	quit = TRUE;
 }
 
-static void rx_handler(uint8_t src, const char *buf, size_t size)
+static void rx_handler(const tinymac_node_t *node, const char *buf, size_t size)
 {
 	struct sockaddr_in sa;
 
@@ -63,7 +63,7 @@ static void rx_handler(uint8_t src, const char *buf, size_t size)
 	sa.sin_port = htons(BROKER_PORT);
 
 	/* UDP send to broker */
-	sendto(socks[src], buf, size, 0, (struct sockaddr*)&sa, sizeof(sa));
+	sendto(socks[node->addr], buf, size, 0, (struct sockaddr*)&sa, sizeof(sa));
 }
 
 int main(void)

@@ -94,7 +94,7 @@ static void sleep(void)
  * application.  Here, we simply turn the LED on or off depending on the
  * value of the first byte in the packet
  */
-static void rx_handler(uint8_t src, const char *buf, size_t size)
+static void rx_handler(const tinymac_node_t *node, const char *buf, size_t size)
 {
 	if (size) {
 		if (*buf) {

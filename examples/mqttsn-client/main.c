@@ -58,7 +58,7 @@ static void break_handler(int signum)
 	quit = 1;
 }
 
-static void rx_handler(uint8_t src, const char *buf, size_t size)
+static void rx_handler(const tinymac_node_t *node, const char *buf, size_t size)
 {
 	mqttsn_c_handler(ctx, buf, size);
 }

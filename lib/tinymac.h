@@ -147,7 +147,67 @@ typedef enum {
 	tinymacRegistrationStatus_AddressInvalid,
 } tinymac_registration_status_t;
 
+/*******************************/
 /* End of protocol definitions */
+/*******************************/
+
+/*! Maximum number of nodes that this node can be aware of (this is the maximum size of the
+ * network if this node is a coordinator) */
+#define TINYMAC_MAX_NODES				32
+/*! Maximum payload length (limited further by the PHY MTU) */
+#define TINYMAC_MAX_PAYLOAD				128
+/*! Maximum number of retries when transmitting a packet with ack request set */
+#define TINYMAC_MAX_RETRIES				3
+/*! Time to wait for an acknowledgement response (ms) */
+#define TINYMAC_ACK_TIMEOUT				250
+/*! Time for an unregistered node to wait between beacon request transmissions (seconds) */
+#define TINYMAC_BEACON_REQUEST_TIMEOUT	10
+/*! Time to wait for a registration request to be answered (ms) */
+#define TINYMAC_REGISTRATION_TIMEOUT	1000
+/*! Coordinator grace period to allow after heartbeat expiry before assuming a client has gone (seconds) */
+#define TINYMAC_HEARTBEAT_GRACE			2
+/*! Time a sleeping node should listen after transmitting or receiving a packet with
+ * data pending bit set (microseconds) */
+#define TINYMAC_LISTEN_PERIOD_US		10000
+
+#define TINYMAC_MILLIS(ms)				((ms) / TINYMAC_TICK_MS)
+#define TINYMAC_SECONDS(s)				((s) * 1000 / TINYMAC_TICK_MS)
+
+typedef void (*tinymac_timer_cb_t)(void *arg);
+typedef void (*tinymac_send_cb_t)(int result);
+
+typedef enum {
+	tinymacNodeState_Unregistered = 0,
+	tinymacNodeState_Registered,
+	tinymacNodeState_SendPending,
+	tinymacNodeState_WaitAck,
+} tinymac_node_state_t;
+
+typedef struct {
+	tinymac_timer_cb_t		callback;
+	void					*arg;
+	uint32_t				expiry;
+} tinymac_timer_t;
+
+typedef struct {
+	uint64_t				uuid;			/*< Unit identifier */
+	uint32_t				last_heard;		/*< Last heard time (ticks) */
+	uint16_t				flags;			/*< Node flags (from registration) */
+	uint8_t					addr;			/*< Assigned short address */
+	int8_t					rssi;			/*< Last signal strength if known (dBm), or 0 */
+	tinymac_node_state_t	state;			/*< Current node state */
+
+	/* Private elements follow - don't look! */
+
+	tinymac_header_t		pending_header;	/*< Header for pending packet */
+	size_t					pending_size;	/*< Size of pending outbound payload */
+	char					pending[TINYMAC_MAX_PAYLOAD];	/*< Pending outbound packet payload */
+	tinymac_send_cb_t		send_cb;		/*< Callback invoked when pending packet sent/expires */
+
+	tinymac_timer_t			ack_timer;		/*< Timer for ack timeout */
+	tinymac_timer_t			validity_timer;	/*< Validity timeout for deferred sends */
+	uint8_t					retries;		/*< Number of tx tries remaining */
+} tinymac_node_t;
 
 typedef struct {
 	uint64_t		uuid;
@@ -157,9 +217,8 @@ typedef struct {
 	uint8_t			beacon_offset;
 } tinymac_params_t;
 
-typedef void (*tinymac_send_cb_t)(int result);
-typedef void (*tinymac_recv_cb_t)(uint8_t src, const char *payload, size_t size);
-typedef void (*tinymac_reg_cb_t)(uint64_t uuid, uint8_t addr);
+typedef void (*tinymac_recv_cb_t)(const tinymac_node_t *node, const char *payload, size_t size);
+typedef void (*tinymac_reg_cb_t)(const tinymac_node_t *node);
 
 int tinymac_init(const tinymac_params_t *params);
 
@@ -220,23 +279,6 @@ void tinymac_register_reg_cb(tinymac_reg_cb_t cb);
  * \param cb		Pointer to callback to be invoked
  */
 void tinymac_register_dereg_cb(tinymac_reg_cb_t cb);
-
-/*!
- * Look up the UUID of the device currently assigned to
- * the specified network address
- *
- * \param addr		Address to look up
- * \return			UUID of registered node or 0 if not found
- */
-uint64_t tinymac_get_uuid_for_addr(uint8_t addr);
-
-/*!
- * Look up the current network address of the specified UUID
- *
- * \param uuid		UUID to look up
- * \return			Current network address or 0 if not registered
- */
-uint8_t tinymac_get_addr_for_uuid(uint64_t uuid);
 
 void tinymac_dump_nodes(void);
 
