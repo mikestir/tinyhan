@@ -18,12 +18,17 @@
  * to MQTT/JSON.
  */
 
-const tinyapp_item_info_t tinyapp_item_info_system[] = {
+const tinyapp_item_info_t tinyapp_item_info_status[] = {
+		{ "battery", tinyappType_Unsigned },
+		{ "runtime", tinyappType_Unsigned },
+		{ "coord_rssi", tinyappType_Signed },
+		{ NULL },
+};
+
+const tinyapp_item_info_t tinyapp_item_info_devinfo[] = {
 		{ "type", tinyappType_Unsigned },
 		{ "name", tinyappType_String },
-		{ "battery", tinyappType_Unsigned },
 		{ "update_rate", tinyappType_Unsigned },
-		{ "runtime", tinyappType_Unsigned },
 		{ NULL },
 };
 
@@ -84,7 +89,8 @@ const tinyapp_item_info_t tinyapp_item_info_ha[]  = {
 /* Map profiles to MQTT topics.  Must be in the same order
  * as \see tinyapp_profile_t */
 const char* tinyapp_profile_tags[] = {
-		"sys",
+		"status",
+		"info",
 		"generic",
 		"env",
 		"hvac",
@@ -92,10 +98,25 @@ const char* tinyapp_profile_tags[] = {
 		"ha",
 };
 
+/* Map device types to textual description.  Must be in the same order
+ * as \see tinyapp_nodetype_t */
+const char* tinyapp_nodetype_str[] = {
+		"Generic",
+		"Generic Sensor",
+		"Generic Actuator",
+		"Environmental Sensor",
+		"Heating Control",
+		"Lighting Control",
+		"Energy Monitoring",
+		"Occupancy Detector",
+		"Switch",
+};
+
 /* Map profiles to item tables.  Must be in the same order
  * as \see tinyapp_profile_t */
 const tinyapp_item_info_t* tinyapp_profile_items[] = {
-		tinyapp_item_info_system,
+		tinyapp_item_info_status,
+		tinyapp_item_info_devinfo,
 		tinyapp_item_info_generic,
 		tinyapp_item_info_env,
 		tinyapp_item_info_hvac,
@@ -159,7 +180,7 @@ void tinyapp_serialise_string(tinyapp_t *ctx, uint8_t type, const char *str, siz
 void tinyapp_deserialise(const uint8_t *buf, size_t size, tinyapp_item_cb_t cb)
 {
 	const uint8_t *ptr = buf;
-	size_t len;
+	size_t len = 0;
 	uint8_t profile = 0; /* default profile */
 
 	/* Skip flags byte */

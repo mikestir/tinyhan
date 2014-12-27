@@ -40,7 +40,8 @@ typedef struct {
 } tinyapp_item_info_t;
 
 typedef enum {
-	tinyappProfile_System = 0x00,			/*< System/default */
+	tinyappProfile_NodeStatus = 0x00,		/*< Device status */
+	tinyappProfile_NodeInfo,				/*< Device info */
 	tinyappProfile_Generic,					/*< Generic data */
 	tinyappProfile_Environmental,			/*< Environmental data */
 	tinyappProfile_HVAC,					/*< Heating, Ventilation and Air Conditioning */
@@ -51,20 +52,27 @@ typedef enum {
 /*! Node types, for user interface informational purposes */
 typedef enum {
 	tinyappNodeType_Generic = 0,			/*< Unspecified node type */
-	tinyappNodeType_Sensor,					/*< General purpose environmental sensor */
+	tinyappNodeType_GenericSensor,			/*< Generic sensor device */
+	tinyappNodeType_GenericActuator,		/*< Generic actuator device */
+	tinyappNodeType_Environmental,			/*< General purpose environmental sensor */
 	tinyappNodeType_Heating,				/*< Heating control */
+	tinyappNodeType_Lighting,				/*< Lighting control */
+	tinyappNodeType_Energy,					/*< Energy monitoring device */
 	tinyappNodeType_Occupancy,				/*< Occupancy detection node */
-	tinyappNodeType_Lighting,				/*< Lighting controller */
 	tinyappNodeType_Switch,					/*< Switch or dimmer */
 } tinyapp_nodetype_t;
 
 typedef enum {
-	tinyappSystem_NodeType = 0x00,			/*< Node type */
-	tinyappSystem_Name,						/*< Friendly name (variable length) */
-	tinyappSystem_Battery,					/*< Battery voltage (mV) */
-	tinyappSystem_UpdateRate,				/*< Data update rate (seconds) */
-	tinyappSystem_Runtime,					/*< Total runtime (seconds) */
-} tinyapp_profile_system_t;
+	tinyappNodeStatus_Battery = 0x00,		/*< Battery voltage (mV) */
+	tinyappNodeStatus_Runtime,				/*< Total runtime (seconds) */
+	tinyappNodeStatus_CoordRSSI,			/*< Coordinator RSSI (dBm) */
+} tinyapp_profile_status_t;
+
+typedef enum {
+	tinyappNodeInfo_Type = 0x00,			/*< Node type */
+	tinyappNodeInfo_Name,					/*< Friendly name (variable length) */
+	tinyappNodeInfo_UpdateRate,				/*< Data update rate (seconds) */
+} tinyapp_profile_devinfo_t;
 
 typedef enum {
 	tinyappGeneric_Analogue0 = 0x00,		/*< General purpose analogue value 0 */
