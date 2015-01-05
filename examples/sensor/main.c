@@ -94,13 +94,15 @@ static void sleep(void)
  * application.  Here, we simply turn the LED on or off depending on the
  * value of the first byte in the packet
  */
-static void rx_handler(const tinymac_node_t *node, const char *buf, size_t size)
+static void rx_handler(const tinymac_node_t *node, uint8_t type, const char *buf, size_t size)
 {
-	if (size) {
-		if (*buf) {
-			SETP(LED);
-		} else {
-			CLEARP(LED);
+	if (type == tinymacType_RawData) {
+		if (size) {
+			if (*buf) {
+				SETP(LED);
+			} else {
+				CLEARP(LED);
+			}
 		}
 	}
 }
@@ -112,7 +114,7 @@ static void rx_handler(const tinymac_node_t *node, const char *buf, size_t size)
 static void post_message(void)
 {
 	uint16_t battmv = vbatt_mv();
-	tinymac_send(0, (const char*)&battmv, sizeof(battmv), 0, 0, NULL);
+	tinymac_send(0, tinymacType_RawData, (const char*)&battmv, sizeof(battmv), 0, NULL);
 }
 
 int main(void)

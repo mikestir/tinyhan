@@ -74,10 +74,10 @@ typedef enum {
 	tinymacType_Reserved13,
 	tinymacType_Reserved14,
 	tinymacType_Reserved15,
-	tinymacType_Data,
-	tinymacType_Reserved17,
-	tinymacType_Reserved18,
-	tinymacType_Reserved19,
+	tinymacType_RawData,
+	tinymacType_TAP,
+	tinymacType_MQTTSN,
+	tinymacType_6LoWPAN,
 	tinymacType_Reserved20,
 	tinymacType_Reserved21,
 	tinymacType_Reserved22,
@@ -88,8 +88,8 @@ typedef enum {
 	tinymacType_Reserved27,
 	tinymacType_Reserved28,
 	tinymacType_Reserved29,
-	tinymacType_Reserved30,
-	tinymacType_Reserved31,
+	tinymacType_SysLog,
+	tinymacType_Extended,
 } tinymac_packet_type_t;
 
 typedef struct {
@@ -217,7 +217,7 @@ typedef struct {
 	uint8_t			beacon_offset;
 } tinymac_params_t;
 
-typedef void (*tinymac_recv_cb_t)(const tinymac_node_t *node, const char *payload, size_t size);
+typedef void (*tinymac_recv_cb_t)(const tinymac_node_t *node, uint8_t type, const char *payload, size_t size);
 typedef void (*tinymac_reg_cb_t)(const tinymac_node_t *node);
 
 int tinymac_init(const tinymac_params_t *params);
@@ -246,14 +246,14 @@ void tinymac_tick_handler(void *arg);
  * calls the tick handler and the PHY receive handler.
  *
  * \param dest		Destination short address
+ * \param type		Packet type and flags to set (\see tinymac_packet_type_t)
  * \param buf		Pointer to payload data (will be copied if necessary)
  * \param size		Size of payload data
  * \param validity	Validity period (in seconds) for packets sent to a sleeping node
- * \param flags		Flags to set (TINYMAC_FLAGS_ACK_REQUEST only)
  * \param cb		Callback invoked on successful delivery or expiry of validity period
  * \return			Sequence number or -ve error code
  */
-int tinymac_send(uint8_t dest, const char *buf, size_t size, uint16_t validity, uint8_t flags, tinymac_send_cb_t cb);
+int tinymac_send(uint8_t dest, uint8_t type, const char *buf, size_t size, uint16_t validity, tinymac_send_cb_t cb);
 
 /*!
  * Check if we are connected to a coordinator
@@ -279,6 +279,13 @@ void tinymac_register_reg_cb(tinymac_reg_cb_t cb);
  * \param cb		Pointer to callback to be invoked
  */
 void tinymac_register_dereg_cb(tinymac_reg_cb_t cb);
+
+/*!
+ * Look up a registered node given UUID
+ * \param uuid		64-bit unique ID
+ * \return			Pointer to node info
+ */
+const tinymac_node_t* tinymac_get_node(uint64_t uuid);
 
 void tinymac_dump_nodes(void);
 

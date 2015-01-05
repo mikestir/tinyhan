@@ -58,14 +58,16 @@ static void break_handler(int signum)
 	quit = 1;
 }
 
-static void rx_handler(const tinymac_node_t *node, const char *buf, size_t size)
+static void rx_handler(const tinymac_node_t *node, uint8_t type, const char *buf, size_t size)
 {
-	mqttsn_c_handler(ctx, buf, size);
+	if (type == tinymacType_MQTTSN) {
+		mqttsn_c_handler(ctx, buf, size);
+	}
 }
 
 static int packet_send(const char *buf, size_t size)
 {
-	return tinymac_send(0, buf, size, 0, 0, NULL);
+	return tinymac_send(0, tinymacType_MQTTSN, buf, size, 0, NULL);
 }
 
 int main(void)

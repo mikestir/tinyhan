@@ -53,17 +53,19 @@ static void break_handler(int signum)
 	quit = TRUE;
 }
 
-static void rx_handler(const tinymac_node_t *node, const char *buf, size_t size)
+static void rx_handler(const tinymac_node_t *node, uint8_t type, const char *buf, size_t size)
 {
 	struct sockaddr_in sa;
 
-	memset(&sa, 0, sizeof(sa));
-	sa.sin_family = AF_INET;
-	sa.sin_addr.s_addr = inet_addr(BROKER_ADDR);
-	sa.sin_port = htons(BROKER_PORT);
+	if (type == tinymacType_MQTTSN) {
+		memset(&sa, 0, sizeof(sa));
+		sa.sin_family = AF_INET;
+		sa.sin_addr.s_addr = inet_addr(BROKER_ADDR);
+		sa.sin_port = htons(BROKER_PORT);
 
-	/* UDP send to broker */
-	sendto(socks[node->addr], buf, size, 0, (struct sockaddr*)&sa, sizeof(sa));
+		/* UDP send to broker */
+		sendto(socks[node->addr], buf, size, 0, (struct sockaddr*)&sa, sizeof(sa));
+	}
 }
 
 int main(void)
@@ -182,7 +184,7 @@ int main(void)
 					perror("recvfrom");
 					return 1;
 				}
-				tinymac_send((uint8_t)events[n].data.u32, payload, size, 0, 0, NULL);
+				tinymac_send((uint8_t)events[n].data.u32, tinymacType_MQTTSN, payload, size, 0, NULL);
 			} else if (events[n].data.u32 == MAX_DEVICES + 0) {
 				/* PHY event */
 				phy_event_handler();

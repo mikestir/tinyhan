@@ -710,6 +710,7 @@ static void tinymac_recv_cb(const char *buf, size_t size, int rssi)
 {
 	tinymac_header_t *hdr = (tinymac_header_t*)buf;
 	tinymac_node_t *node = NULL;
+	uint8_t type = hdr->flags & TINYMAC_FLAGS_TYPE_MASK;
 
 	if (size < sizeof(tinymac_header_t)) {
 		ERROR("Discarding short packet\n");
@@ -802,81 +803,82 @@ static void tinymac_recv_cb(const char *buf, size_t size, int rssi)
 		}
 	}
 
-	switch (hdr->flags & TINYMAC_FLAGS_TYPE_MASK) {
-	case tinymacType_Beacon:
-		/* Beacon */
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_beacon_t)) {
-			ERROR("Discarding short packet\n");
-			return;
+	if (type >= tinymacType_RawData) {
+		/* Forward non-MAC packets to the upper layer */
+		TRACE("RX DATA (0x%02X)\n", type);
+		if (tinymac_ctx->rx_cb) {
+			tinymac_ctx->rx_cb((const tinymac_node_t*)node, type & TINYMAC_FLAGS_TYPE_MASK, hdr->payload, size - sizeof(tinymac_header_t));
 		}
-		tinymac_rx_beacon(hdr, size);
-		break;
-	case tinymacType_Ack:
-		/* Acknowledgement */
-		TRACE("RX ACK\n");
+	} else {
+		/* Handle MAC control packets */
+		switch (type) {
+		case tinymacType_Beacon:
+			/* Beacon */
+			if (size < sizeof(tinymac_header_t) + sizeof(tinymac_beacon_t)) {
+				ERROR("Discarding short packet\n");
+				return;
+			}
+			tinymac_rx_beacon(hdr, size);
+			break;
+		case tinymacType_Ack:
+			/* Acknowledgement */
+			TRACE("RX ACK\n");
 
-		if (node && node->state == tinymacNodeState_WaitAck) {
-			if (hdr->seq == node->pending_header.seq) {
-				/* Ack ok, cancel timers */
-				TRACE("Valid ack received from %02X for %02X\n", hdr->src_addr, hdr->seq);
-				node->state = tinymacNodeState_Registered;
-				tinymac_cancel_timer(&node->ack_timer);
-				tinymac_cancel_timer(&node->validity_timer);
+			if (node && node->state == tinymacNodeState_WaitAck) {
+				if (hdr->seq == node->pending_header.seq) {
+					/* Ack ok, cancel timers */
+					TRACE("Valid ack received from %02X for %02X\n", hdr->src_addr, hdr->seq);
+					node->state = tinymacNodeState_Registered;
+					tinymac_cancel_timer(&node->ack_timer);
+					tinymac_cancel_timer(&node->validity_timer);
 
-				/* Callback success */
-				if (node->send_cb) {
-					node->send_cb(0);
+					/* Callback success */
+					if (node->send_cb) {
+						node->send_cb(0);
+					}
+				} else {
+					ERROR("Bad ack received from %02X\n", hdr->src_addr);
 				}
 			} else {
-				ERROR("Bad ack received from %02X\n", hdr->src_addr);
+				ERROR("Unexpected ACK\n");
 			}
-		} else {
-			ERROR("Unexpected ACK\n");
-		}
-		break;
-	case tinymacType_Poll:
-		/* This just solicits an ack, which happens above */
-		TRACE("POLL\n");
-		break;
-	case tinymacType_Data:
-		/* Forward to upper layer */
-		TRACE("RX DATA\n");
-		if (tinymac_ctx->rx_cb) {
-			tinymac_ctx->rx_cb((const tinymac_node_t*)node, hdr->payload, size - sizeof(tinymac_header_t));
-		}
-		break;
-
+			break;
+		case tinymacType_Poll:
+			/* This just solicits an ack, which happens above */
+			TRACE("POLL\n");
+			break;
 #if WITH_TINYMAC_COORDINATOR
-	case tinymacType_BeaconRequest:
-		/* This solicits an extra beacon */
-		TRACE("BEACON REQUEST\n");
-		tinymac_tx_beacon(FALSE);
-		break;
-	case tinymacType_RegistrationRequest:
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_registration_request_t)) {
-			ERROR("Discarding short packet\n");
-			return;
-		}
-		tinymac_rx_registration_request(hdr, size);
-		break;
-	case tinymacType_DeregistrationRequest:
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_deregistration_request_t)) {
-			ERROR("Discarding short packet\n");
-			return;
-		}
-		tinymac_rx_deregistration_request(hdr, size);
-		break;
+		case tinymacType_BeaconRequest:
+			/* This solicits an extra beacon */
+			TRACE("BEACON REQUEST\n");
+			tinymac_tx_beacon(FALSE);
+			break;
+		case tinymacType_RegistrationRequest:
+			if (size < sizeof(tinymac_header_t) + sizeof(tinymac_registration_request_t)) {
+				ERROR("Discarding short packet\n");
+				return;
+			}
+			tinymac_rx_registration_request(hdr, size);
+			break;
+		case tinymacType_DeregistrationRequest:
+			if (size < sizeof(tinymac_header_t) + sizeof(tinymac_deregistration_request_t)) {
+				ERROR("Discarding short packet\n");
+				return;
+			}
+			tinymac_rx_deregistration_request(hdr, size);
+			break;
 #endif
-	case tinymacType_RegistrationResponse:
-		/* Attach/detach response message */
-		if (size < sizeof(tinymac_header_t) + sizeof(tinymac_registration_response_t)) {
-			ERROR("Discarding short packet\n");
-			return;
+		case tinymacType_RegistrationResponse:
+			/* Attach/detach response message */
+			if (size < sizeof(tinymac_header_t) + sizeof(tinymac_registration_response_t)) {
+				ERROR("Discarding short packet\n");
+				return;
+			}
+			tinymac_rx_registration_response(hdr, size);
+			break;
+		default:
+			ERROR("Unsupported packet type\n");
 		}
-		tinymac_rx_registration_response(hdr, size);
-		break;
-	default:
-		ERROR("Unsupported packet type\n");
 	}
 }
 
@@ -990,11 +992,17 @@ void tinymac_tick_handler(void *arg)
 	tinymac_ctx->tick_count++;
 }
 
-int tinymac_send(uint8_t dest, const char *buf, size_t size,
-		uint16_t validity, uint8_t flags,
+int tinymac_send(uint8_t dest, uint8_t type,
+		const char *buf, size_t size,
+		uint16_t validity,
 		tinymac_send_cb_t cb)
 {
 	tinymac_node_t *node;
+
+	if ((type & TINYMAC_FLAGS_TYPE_MASK) < tinymacType_RawData) {
+		ERROR("Bad type %02X\n", type & TINYMAC_FLAGS_TYPE_MASK);
+		return -1;
+	}
 
 	node = tinymac_get_node_by_addr(dest);
 	if (!node) {
@@ -1007,8 +1015,7 @@ int tinymac_send(uint8_t dest, const char *buf, size_t size,
 		validity = 1 << (node->flags & TINYMAC_ATTACH_HEARTBEAT_MASK);
 	}
 
-	return tinymac_tx_packet(node, (flags & TINYMAC_FLAGS_ACK_REQUEST) | (uint16_t)tinymacType_Data,
-			buf, size, validity, cb);
+	return tinymac_tx_packet(node, type, buf, size, validity, cb);
 }
 
 int tinymac_is_registered(void)
@@ -1027,6 +1034,11 @@ void tinymac_permit_attach(boolean_t permit)
 void tinymac_register_reg_cb(tinymac_reg_cb_t cb)
 {
 	tinymac_ctx->reg_cb = cb;
+}
+
+const tinymac_node_t* tinymac_get_node(uint64_t uuid)
+{
+	return (const tinymac_node_t*)tinymac_get_node_by_uuid(uuid);
 }
 
 void tinymac_register_dereg_cb(tinymac_reg_cb_t cb)
