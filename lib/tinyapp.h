@@ -150,10 +150,14 @@ static inline size_t tinyapp_size(tinyapp_t *ctx)
 typedef void(*tinyapp_item_cb_t)(uint8_t profile, uint8_t item, const void *value, size_t len);
 void tinyapp_deserialise(const uint8_t *buf, size_t size, tinyapp_item_cb_t cb);
 
+#if WITH_TINYMAC_COORDINATOR
+
 /* Utility functions for profile/item conversion and name tables */
 int tinyapp_get_profile_id(const char *tag);
 const char* tinyapp_get_profile_tag(uint8_t profile);
 int tinyapp_get_item_id(uint8_t profile, const char *tag);
 const tinyapp_item_info_t* tinyapp_get_item_info(uint8_t profile, uint8_t item);
+
+#endif
 
 #endif /* TINYAPP_H_ */

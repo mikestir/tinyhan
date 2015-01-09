@@ -186,6 +186,12 @@ def parse_reg_ack(payload):
 		msg = msg + ' (UNKNOWN STATUS)'
 	return msg
 
+def parse_dummy(payload):
+	return hexlify(payload)
+
+def parse_syslog(payload):
+	return str(payload[1:])
+
 parserfunc = [
 	parse_beacon,
 	parse_beacon_req,
@@ -193,7 +199,33 @@ parserfunc = [
 	parse_ack,
 	parse_reg_req,
 	parse_dereg_req,
-	parse_reg_ack
+	parse_reg_ack,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_dummy,
+	parse_syslog,
+	parse_dummy,
 	]
 
 def parse_payload(payload, type):

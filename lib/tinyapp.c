@@ -13,6 +13,7 @@
 #include "common.h"
 #include "tinyapp.h"
 
+#if WITH_TINYMAC_COORDINATOR
 /*
  * Conversion tables for mapping TAP profiles and data items
  * to MQTT/JSON.
@@ -123,6 +124,7 @@ const tinyapp_item_info_t* tinyapp_profile_items[] = {
 		tinyapp_item_info_energy,
 		tinyapp_item_info_ha,
 };
+#endif
 
 /*****************/
 /* Serialisation */
@@ -223,6 +225,7 @@ void tinyapp_deserialise(const uint8_t *buf, size_t size, tinyapp_item_cb_t cb)
 	}
 }
 
+#if WITH_TINYMAC_COORDINATOR
 /*******************/
 /* Table Utilities */
 /*******************/
@@ -267,3 +270,5 @@ const tinyapp_item_info_t* tinyapp_get_item_info(uint8_t profile, uint8_t item)
 	/* FIXME: Validate item index, currently requires walking the table */
 	return (profile < ARRAY_SIZE(tinyapp_profile_items)) ? &tinyapp_profile_items[profile][item] : NULL;
 }
+#endif
+
