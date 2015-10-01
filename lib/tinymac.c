@@ -1023,6 +1023,11 @@ int tinymac_is_registered(void)
 	return (tinymac_ctx->state == tinymacClientState_Registered) ? 1 : 0;
 }
 
+unsigned int tinymac_get_mtu(void)
+{
+	return phy_get_mtu() - sizeof(tinymac_header_t);
+}
+
 #if WITH_TINYMAC_COORDINATOR
 void tinymac_permit_attach(boolean_t permit)
 {

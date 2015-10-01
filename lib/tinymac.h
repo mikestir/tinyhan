@@ -262,6 +262,13 @@ int tinymac_send(uint8_t dest, uint8_t type, const char *buf, size_t size, uint1
  */
 int tinymac_is_registered(void);
 
+/*!
+ * Returns the maximum payload size that may be transmitted for the
+ * selected PHY
+ * \return			MTU in bytes
+ */
+unsigned int tinymac_get_mtu(void);
+
 /********************/
 /* Coordinator only */
 /********************/
